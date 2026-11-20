@@ -1,0 +1,6 @@
+{
+  "name": "Bhoomgaadi Procurement",
+  "description": "Offline-first farmer procurement, billing, PDF voucher printing, CSV export, and SQLite backup app for Bhoomgaadi organic collectives.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
