@@ -30,6 +30,13 @@ data class FarmerImportSummary(
     val villagesAdded: Int
 )
 
+private data class DetectedHeader(
+    val headerRowIndex: Int,
+    val colAadhaar: Int,
+    val colName: Int,
+    val headers: List<String>
+)
+
 /**
  * Lightweight, zero-bloat native offline importer for Excel (.xlsx) and CSV (.csv) Farmer Master files.
  * Reads Member & Non-Member farmers, upserts by unique 12-digit Aadhaar, and automatically builds the
@@ -47,42 +54,76 @@ class ExcelFarmerImporter(
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: throw IllegalStateException("Could not open selected file.")
 
-            val isZipXlsx = bytes.size >= 4 &&
-                bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() // PK zip magic header
-
-            val rows: List<List<String>> = if (isZipXlsx) {
-                parseXlsxRows(bytes)
-            } else {
-                parseCsvRows(bytes)
+            if (bytes.size < 4) {
+                throw IllegalArgumentException("Selected file is empty.")
             }
 
-            if (rows.size < 2) {
+            // Detect legacy binary .xls (OLE2 compound file: D0 CF 11 E0)
+            val isLegacyXls = bytes[0] == 0xD0.toByte() &&
+                bytes[1] == 0xCF.toByte() &&
+                bytes[2] == 0x11.toByte() &&
+                bytes[3] == 0xE0.toByte()
+            if (isLegacyXls) {
+                throw IllegalArgumentException(
+                    "Legacy Excel (.xls) file detected. Please open it in Excel and choose 'Save As → Excel Workbook (.xlsx)' or 'CSV (.csv)', or download the empty .xlsx template from this screen."
+                )
+            }
+
+            val isZipXlsx = bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() // PK zip header
+
+            val candidateSheets: List<List<List<String>>> = if (isZipXlsx) {
+                parseAllXlsxSheets(bytes)
+            } else {
+                listOf(parseCsvRows(bytes))
+            }
+
+            if (candidateSheets.isEmpty() || candidateSheets.all { it.size < 2 }) {
                 throw IllegalArgumentException("File appears empty or has no data rows beneath the header.")
             }
 
-            val headers = rows.first().map { normalizeHeader(it) }
-            val colAadhaar = findCol(headers, "aadhaar", "aadhar", "uid", "aadhaarno", "aadhaarnumber", "uidno")
-            val colName = findCol(headers, "farmername", "name", "beneficiaryname", "membername")
-            val colFather = findCol(headers, "father", "husband", "fatherhusband", "fatherorhusband", "fathername", "guardian", "so", "wo")
-            val colMobile = findCol(headers, "mobile", "phone", "contact", "mobileno", "phonenumber")
-            val colBlock = findCol(headers, "block", "blockname", "tehsil")
-            val colCluster = findCol(headers, "cluster", "clustername", "panchayat", "grampanchayat")
-            val colVillage = findCol(headers, "village", "villagename", "gram")
-            val colShg = findCol(headers, "shg", "shgname", "group", "samuh")
-            val colMembership = findCol(headers, "membershipstatus", "membership", "memberstatus", "ismember", "type", "category")
-            val colMemberCode = findCol(headers, "membercode", "bmgdcode", "bmgdmembercode", "membershipno", "memberno", "memberid")
-            val colBankType = findCol(headers, "bankaccounttype", "accounttype")
-            val colAccHolder = findCol(headers, "accountholder", "accountholdername", "holdername")
-            val colBankName = findCol(headers, "bank", "bankname")
-            val colAccNo = findCol(headers, "accountno", "accountnumber", "fullaccountnumber", "acno", "bankaccount", "bankaccountno")
-            val colIfsc = findCol(headers, "ifsc", "ifsccode")
-            val colBranch = findCol(headers, "branch", "branchname")
+            // Find the first worksheet & row (within top 15 rows) that contains Aadhaar + Farmer Name columns
+            var chosenRows: List<List<String>>? = null
+            var detected: DetectedHeader? = null
+            for (sheetRows in candidateSheets) {
+                val found = detectHeaderRow(sheetRows)
+                if (found != null) {
+                    chosenRows = sheetRows
+                    detected = found
+                    break
+                }
+            }
 
-            if (colAadhaar < 0 || colName < 0) {
+            if (chosenRows == null || detected == null) {
+                val firstRowPreview = candidateSheets.firstOrNull()
+                    ?.firstOrNull { row -> row.any { it.isNotBlank() } }
+                    ?.filter { it.isNotBlank() }
+                    ?.take(6)
+                    ?.joinToString(", ")
+                    .orEmpty()
                 throw IllegalArgumentException(
-                    "Required columns not found. Please ensure the Excel/CSV sheet includes 'Aadhaar' and 'Farmer Name' headers."
+                    "Required columns 'Aadhaar Number' and 'Farmer Name' not found. " +
+                        (if (firstRowPreview.isNotBlank()) "Detected first row: [$firstRowPreview]. " else "") +
+                        "Tap 'Download Empty Excel Template (.xlsx)' above for the exact format."
                 )
             }
+
+            val headers = detected.headers
+            val colAadhaar = detected.colAadhaar
+            val colName = detected.colName
+            val colFather = findCol(headers, "fatherhusband", "fatherorhusband", "fatherorhusbandname", "fathername", "husbandname", "father", "husband", "guardian", "parent", "so", "wo")
+            val colMobile = findCol(headers, "mobilenumber", "mobileno", "phonenumber", "phoneno", "mobile", "phone", "contactno", "contact")
+            val colBlock = findCol(headers, "blockname", "block", "vikaskhand", "tehsil", "blk")
+            val colCluster = findCol(headers, "clustername", "cluster", "panchayat", "grampanchayat", "cls")
+            val colVillage = findCol(headers, "villagename", "village", "gram", "vlg")
+            val colShg = findCol(headers, "shgname", "shg", "groupname", "samuh", "group")
+            val colMembership = findCol(headers, "membershipstatus", "memberstatus", "membership", "ismember", "membernonmember", "category", "type")
+            val colMemberCode = findCol(headers, "membershipno", "membershipnumber", "bmgdmembercode", "membercode", "bmgdcode", "memberno", "memberid")
+            val colBankType = findCol(headers, "bankaccounttype", "accounttype", "actype")
+            val colAccHolder = findCol(headers, "accountholdername", "accountholder", "holdername", "acholder")
+            val colBankName = findCol(headers, "bankname", "bank")
+            val colAccNo = findCol(headers, "accountnumber", "fullaccountnumber", "bankaccountnumber", "bankaccountno", "accountno", "acno", "bankaccount", "account")
+            val colIfsc = findCol(headers, "ifsccode", "ifsc")
+            val colBranch = findCol(headers, "branchname", "branch")
 
             val db = dbProvider()
             val farmerDao = db.farmerDao()
@@ -96,7 +137,7 @@ class ExcelFarmerImporter(
             var clustersAdded = 0
             var villagesAdded = 0
 
-            val dataRows = rows.drop(1)
+            val dataRows = chosenRows.drop(detected.headerRowIndex + 1)
             for (row in dataRows) {
                 if (row.all { it.isBlank() }) continue
 
@@ -214,7 +255,7 @@ class ExcelFarmerImporter(
             }
 
             FarmerImportSummary(
-                totalRowsRead = dataRows.size,
+                totalRowsRead = dataRows.count { r -> r.any { it.isNotBlank() } },
                 addedCount = added,
                 updatedCount = updated,
                 skippedCount = skipped,
@@ -225,9 +266,32 @@ class ExcelFarmerImporter(
         }
     }
 
-    private fun parseXlsxRows(xlsxBytes: ByteArray): List<List<String>> {
+    private fun detectHeaderRow(rows: List<List<String>>): DetectedHeader? {
+        val scanLimit = minOf(rows.size, 15)
+        for (rowIdx in 0 until scanLimit) {
+            val normalized = rows[rowIdx].map { normalizeHeader(it) }
+            if (normalized.all { it.isBlank() }) continue
+            val colAadhaar = findCol(
+                normalized,
+                "aadhaarnumber", "aadhaarno", "aadharnumber", "aadharno",
+                "aadhaar", "aadhar", "adhar", "adharno", "adharnumber",
+                "aadhaarid", "aadharid", "uidno", "uidnumber", "uid"
+            )
+            val colName = findCol(
+                normalized,
+                "farmername", "beneficiaryname", "membername", "kisanname",
+                "fullname", "nameoffarmer", "name", "farmer"
+            )
+            if (colAadhaar >= 0 && colName >= 0 && colAadhaar != colName) {
+                return DetectedHeader(rowIdx, colAadhaar, colName, normalized)
+            }
+        }
+        return null
+    }
+
+    private fun parseAllXlsxSheets(xlsxBytes: ByteArray): List<List<List<String>>> {
         var sharedStringsBytes: ByteArray? = null
-        var sheetBytes: ByteArray? = null
+        val sheetEntries = mutableListOf<Pair<String, ByteArray>>()
 
         ZipInputStream(ByteArrayInputStream(xlsxBytes)).use { zis ->
             var entry = zis.nextEntry
@@ -235,8 +299,8 @@ class ExcelFarmerImporter(
                 val name = entry.name.lowercase()
                 if (name == "xl/sharedstrings.xml") {
                     sharedStringsBytes = zis.readBytes()
-                } else if (name == "xl/worksheets/sheet1.xml" || (sheetBytes == null && name.startsWith("xl/worksheets/sheet") && name.endsWith(".xml"))) {
-                    sheetBytes = zis.readBytes()
+                } else if (name.startsWith("xl/worksheets/sheet") && name.endsWith(".xml")) {
+                    sheetEntries.add(name to zis.readBytes())
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry
@@ -244,8 +308,12 @@ class ExcelFarmerImporter(
         }
 
         val sharedStrings = sharedStringsBytes?.let { parseSharedStrings(it) } ?: emptyList()
-        val sheetData = sheetBytes ?: throw IllegalArgumentException("No worksheet found inside Excel (.xlsx) file.")
-        return parseSheetXml(sheetData, sharedStrings)
+        if (sheetEntries.isEmpty()) {
+            throw IllegalArgumentException("No worksheet found inside Excel (.xlsx) file.")
+        }
+        return sheetEntries
+            .sortedBy { it.first }
+            .map { (_, data) -> parseSheetXml(data, sharedStrings) }
     }
 
     private fun parseSharedStrings(bytes: ByteArray): List<String> {
@@ -288,6 +356,8 @@ class ExcelFarmerImporter(
         var currentColIdx = 0
         var currentCellType: String? = null
         var inRow = false
+        var inInlineStr = false
+        val inlineBuffer = StringBuilder()
 
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
@@ -303,13 +373,22 @@ class ExcelFarmerImporter(
                                 val ref = parser.getAttributeValue(null, "r")
                                 currentColIdx = ref?.let { columnRefToIndex(it) } ?: currentColIdx
                                 currentCellType = parser.getAttributeValue(null, "t")
+                                inInlineStr = false
+                                inlineBuffer.clear()
+                            }
+                        }
+                        "is" -> {
+                            if (inRow) {
+                                inInlineStr = true
+                                inlineBuffer.clear()
                             }
                         }
                         "v" -> {
                             if (inRow) {
-                                val raw = parser.nextText()
+                                val raw = parser.nextText().trim()
                                 val resolved = when (currentCellType) {
                                     "s" -> raw.toIntOrNull()?.let { sharedStrings.getOrNull(it) }.orEmpty()
+                                    "str" -> raw
                                     else -> formatNumericCell(raw)
                                 }
                                 currentRow[currentColIdx] = resolved
@@ -317,20 +396,31 @@ class ExcelFarmerImporter(
                             }
                         }
                         "t" -> {
-                            if (inRow && currentCellType == "inlineStr") {
-                                currentRow[currentColIdx] = parser.nextText()
-                                currentColIdx++
+                            if (inRow && (currentCellType == "inlineStr" || inInlineStr)) {
+                                inlineBuffer.append(parser.nextText())
                             }
                         }
                     }
                 }
                 XmlPullParser.END_TAG -> {
-                    if (parser.name == "row" && inRow) {
-                        val maxCol = currentRow.keys.maxOrNull() ?: -1
-                        if (maxCol >= 0) {
-                            rows.add((0..maxCol).map { currentRow[it].orEmpty() })
+                    when (parser.name) {
+                        "is" -> {
+                            if (inRow && inInlineStr) {
+                                currentRow[currentColIdx] = inlineBuffer.toString()
+                                currentColIdx++
+                                inInlineStr = false
+                                inlineBuffer.clear()
+                            }
                         }
-                        inRow = false
+                        "row" -> {
+                            if (inRow) {
+                                val maxCol = currentRow.keys.maxOrNull() ?: -1
+                                if (maxCol >= 0) {
+                                    rows.add((0..maxCol).map { currentRow[it].orEmpty() })
+                                }
+                                inRow = false
+                            }
+                        }
                     }
                 }
             }

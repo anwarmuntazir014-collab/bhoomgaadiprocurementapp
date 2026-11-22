@@ -78,6 +78,70 @@ class CsvExportManager(
         file
     }
 
+    /**
+     * Generates an empty, ready-to-fill Excel (.xlsx) template for importing Farmer Master Data.
+     * Tab 1 ("Farmers_Master") has the exact 16 column headers ready for data entry;
+     * Tab 2 ("Instructions") explains required fields and accepted values.
+     */
+    suspend fun exportFarmerImportTemplateXlsx(): File = withContext(Dispatchers.IO) {
+        val templateHeaders = listOf(
+            "Aadhaar Number",
+            "Farmer Name",
+            "Father/Husband",
+            "Mobile",
+            "Block",
+            "Cluster",
+            "Village",
+            "SHG Name",
+            "Membership Status",
+            "Membership No",
+            "Bank Account Type",
+            "Account Holder",
+            "Bank Name",
+            "Account Number",
+            "IFSC",
+            "Branch"
+        )
+        val instructionsRows = listOf(
+            listOf("Field", "Required?", "Accepted Format / Notes"),
+            listOf("Aadhaar Number", "REQUIRED", "12 digits (no letters). Format cell as Text in Excel so 12 digits stay intact."),
+            listOf("Farmer Name", "REQUIRED", "Full name of the farmer."),
+            listOf("Father/Husband", "Optional", "Father or Husband name."),
+            listOf("Mobile", "Optional", "10-digit mobile number."),
+            listOf("Block", "Recommended", "Auto-builds Block dropdown list during import."),
+            listOf("Cluster", "Recommended", "Auto-builds Cluster dropdown under the selected Block."),
+            listOf("Village", "Recommended", "Auto-builds Village dropdown under the selected Cluster."),
+            listOf("SHG Name", "Optional", "Self-Help Group name (if any)."),
+            listOf("Membership Status", "Recommended", "Use 'Member' or 'Non-Member'."),
+            listOf("Membership No", "Optional", "BMGD Member Code (for Members)."),
+            listOf("Bank Account Type", "Optional", "Use 'Own', 'Relative', or 'None'."),
+            listOf("Account Holder", "Optional", "Defaults to Farmer Name if Bank Account Type is Own."),
+            listOf("Bank Name", "Optional", "e.g., State Bank of India, Chhattisgarh Rajya Gramin Bank."),
+            listOf("Account Number", "Optional", "Digits only; format column as Text in Excel."),
+            listOf("IFSC", "Optional", "11-character IFSC code (e.g., SBIN0001234)."),
+            listOf("Branch", "Optional", "Bank branch name.")
+        )
+        val sheets = listOf(
+            "Farmers_Master" to listOf(templateHeaders),
+            "Instructions" to instructionsRows
+        )
+        val outDir = File(context.filesDir, "exports_csv").apply { mkdirs() }
+        val file = File(outDir, "Bhoomgaadi_Farmer_Master_Template.xlsx")
+        writeSimpleXlsx(file, sheets)
+        file
+    }
+
+    suspend fun writeFarmerImportTemplateToUri(destinationUri: android.net.Uri): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val templateFile = exportFarmerImportTemplateXlsx()
+                context.contentResolver.openOutputStream(destinationUri)?.use { out ->
+                    templateFile.inputStream().use { input -> input.copyTo(out) }
+                } ?: throw IllegalStateException("Could not save template to selected location.")
+                Unit
+            }
+        }
+
     private fun buildFarmersTable(farmers: List<com.example.data.local.entities.FarmerEntity>): List<List<String>> {
         val rows = mutableListOf(
             listOf(

@@ -83,6 +83,25 @@ fun ExportScreen(
         }
     }
 
+    // Save empty Farmer Master Excel Template (.xlsx) directly to device storage via SAF
+    val saveTemplateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isBusy = true
+                val res = csvExportManager.writeFarmerImportTemplateToUri(uri)
+                isBusy = false
+                res.fold(
+                    onSuccess = { snackbarHostState.showSnackbar("Empty Excel template saved! Fill rows & import here.") },
+                    onFailure = { snackbarHostState.showSnackbar(it.message ?: "Could not save template.") }
+                )
+            }
+        }
+    }
+
     // Export SQLite .db Backup via SAF
     val createBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -158,6 +177,48 @@ fun ExportScreen(
                             color = TextSecondary
                         )
                         Spacer(Modifier.height(10.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FieldActionButton(
+                                text = "Save Template (.xlsx)",
+                                icon = Icons.Filled.Download,
+                                color = SecondaryBlue,
+                                enabled = !isBusy,
+                                testTag = "export_download_template_btn",
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    saveTemplateLauncher.launch("Bhoomgaadi_Farmer_Master_Template.xlsx")
+                                }
+                            )
+                            FieldActionButton(
+                                text = "Share Template",
+                                icon = Icons.Filled.Share,
+                                color = CardWhite,
+                                contentColor = BhoomgaadiDarkGreen,
+                                enabled = !isBusy,
+                                testTag = "export_share_template_btn",
+                                modifier = Modifier.weight(0.9f),
+                                onClick = {
+                                    scope.launch {
+                                        isBusy = true
+                                        runCatching { csvExportManager.exportFarmerImportTemplateXlsx() }
+                                            .onSuccess { file ->
+                                                PdfPrintShareHelper.shareFile(
+                                                    context,
+                                                    file,
+                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                    "Share Farmer Master Excel Template"
+                                                )
+                                            }
+                                            .onFailure { snackbarHostState.showSnackbar(it.message ?: "Template error") }
+                                        isBusy = false
+                                    }
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                         FieldActionButton(
                             text = strings.importExcelMaster,
                             icon = Icons.Filled.FileUpload,
