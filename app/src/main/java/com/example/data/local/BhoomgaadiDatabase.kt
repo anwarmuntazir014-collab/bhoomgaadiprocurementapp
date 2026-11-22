@@ -30,7 +30,7 @@ import java.util.Calendar
         BillItemEntity::class,
         AuditLogEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -121,6 +121,12 @@ abstract class BhoomgaadiDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE Farmers ADD COLUMN farmerPhotoPath TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): BhoomgaadiDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -141,7 +147,7 @@ abstract class BhoomgaadiDatabase : RoomDatabase() {
                 BhoomgaadiDatabase::class.java,
                 DB_NAME
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)

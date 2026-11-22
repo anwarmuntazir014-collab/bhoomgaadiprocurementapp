@@ -27,6 +27,7 @@ enum class BillWizardStep {
 data class CreateBillUiState(
     val step: BillWizardStep = BillWizardStep.FIND_FARMER,
     val draft: BillDraft = BillDraft(),
+    val startedWithPreselectedFarmer: Boolean = false,
     val aadhaarInput: String = "",
     val farmerNotFoundAadhaar: String? = null,
     val editingLineId: String? = null,
@@ -136,7 +137,6 @@ class CreateBillViewModel(private val repository: ProcurementRepository) : ViewM
                         existing.header.membershipAmountInr
                     } else repository.prefs.membershipFeeInr,
                     remarks = existing.header.remarks,
-                    weighingSlipRef = existing.header.weighingSlipRef,
                     editReason = ""
                 )
             )
@@ -148,7 +148,8 @@ class CreateBillViewModel(private val repository: ProcurementRepository) : ViewM
             val farmer = repository.getFarmerByUuid(farmerUuid) ?: return@launch
             _uiState.update { state ->
                 state.copy(
-                    step = BillWizardStep.VERIFY_FARMER,
+                    step = BillWizardStep.BILL_INFO,
+                    startedWithPreselectedFarmer = true,
                     aadhaarInput = farmer.aadhaarNumber,
                     farmerNotFoundAadhaar = null,
                     draft = state.draft.copy(
@@ -284,11 +285,10 @@ class CreateBillViewModel(private val repository: ProcurementRepository) : ViewM
         }
     }
 
-    fun updateMeta(weighingSlipRef: String, remarks: String, editReason: String = _uiState.value.draft.editReason) {
+    fun updateMeta(remarks: String, editReason: String = _uiState.value.draft.editReason) {
         _uiState.update {
             it.copy(
                 draft = it.draft.copy(
-                    weighingSlipRef = weighingSlipRef,
                     remarks = remarks,
                     editReason = editReason
                 ),

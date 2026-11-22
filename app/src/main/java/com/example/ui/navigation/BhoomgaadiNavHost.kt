@@ -86,10 +86,6 @@ fun BhoomgaadiNavHost(
                     navController.navigate(Routes.FARMERS)
                 },
                 onAddFarmer = { navController.navigate(Routes.farmerForm()) },
-                onCreateBill = {
-                    createBillVm.startNewBill()
-                    navController.navigate(Routes.createBill())
-                },
                 onOpenDashboard = { navController.navigate(Routes.DASHBOARD) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 onOpenExport = { navController.navigate(Routes.EXPORT) },
@@ -194,8 +190,8 @@ fun BhoomgaadiNavHost(
                 viewModel = historyVm,
                 onBack = { navController.popBackStack() },
                 onCreateBill = {
-                    createBillVm.startNewBill()
-                    navController.navigate(Routes.createBill())
+                    farmerVm.resetAadhaarLookup()
+                    navController.navigate(Routes.FARMERS)
                 },
                 onOpenBillDetail = { uuid -> navController.navigate(Routes.billDetail(uuid)) }
             )

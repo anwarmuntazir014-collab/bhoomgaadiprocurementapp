@@ -30,7 +30,6 @@ data class BillDraft(
     val membershipEnrolled: Boolean = false,
     val membershipFeeInr: Double = 0.0,
     val remarks: String = "",
-    val weighingSlipRef: String = "",
     val editReason: String = ""
 ) {
     val isEditMode: Boolean get() = !editingBillUuid.isNullOrBlank()

@@ -42,7 +42,6 @@ fun HomeScreen(
     onToggleLanguage: () -> Unit,
     onSearchFarmer: () -> Unit,
     onAddFarmer: () -> Unit,
-    onCreateBill: () -> Unit,
     onOpenDashboard: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenExport: () -> Unit,
@@ -132,15 +131,6 @@ fun HomeScreen(
                     contentColor = Color.White,
                     testTag = "home_btn_add_farmer",
                     onClick = onAddFarmer
-                )
-
-                HomeMenuButton(
-                    text = strings.createNewBill,
-                    icon = Icons.Filled.NoteAdd,
-                    containerColor = ProcurementAmber,
-                    contentColor = Color.White,
-                    testTag = "home_btn_create_bill",
-                    onClick = onCreateBill
                 )
 
                 HomeMenuButton(

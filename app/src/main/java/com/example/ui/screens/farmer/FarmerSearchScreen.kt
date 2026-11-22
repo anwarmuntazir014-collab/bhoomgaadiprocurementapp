@@ -1,5 +1,6 @@
 package com.example.ui.screens.farmer
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,10 +51,20 @@ fun FarmerSearchScreen(
     val farmers by viewModel.farmers.collectAsStateWithLifecycle()
     val strings = LocalAppStrings.current
 
+    var searchMode by remember { mutableStateOf(FarmerSearchMode.AADHAAR) }
     var aadhaarInput by remember { mutableStateOf("") }
-    var showBrowseList by remember { mutableStateOf(false) }
+    var codeInput by remember { mutableStateOf("") }
     var showBankDialog by remember { mutableStateOf(false) }
     var showDocsDialog by remember { mutableStateOf(false) }
+
+    // Keep ViewModel query synced when searching by Name or Code for live matching results
+    LaunchedEffect(searchMode, codeInput) {
+        if (searchMode == FarmerSearchMode.FARMER_CODE) {
+            viewModel.updateSearchQuery(codeInput)
+        } else if (searchMode == FarmerSearchMode.AADHAAR) {
+            viewModel.updateSearchQuery("")
+        }
+    }
 
     val screenTitle = when (lookupState) {
         is AadhaarLookupState.Idle -> strings.searchFarmer
@@ -60,15 +72,19 @@ fun FarmerSearchScreen(
         is AadhaarLookupState.Found -> "Farmer Details"
     }
 
+    fun handleBack() {
+        if (lookupState !is AadhaarLookupState.Idle) {
+            viewModel.resetAadhaarLookup()
+        } else {
+            onBack()
+        }
+    }
+
+    BackHandler { handleBack() }
+
     BhoomgaadiScaffold(
         title = screenTitle,
-        onBack = {
-            if (lookupState !is AadhaarLookupState.Idle) {
-                viewModel.resetAadhaarLookup()
-            } else {
-                onBack()
-            }
-        }
+        onBack = { handleBack() }
     ) { padding ->
         Box(
             modifier = Modifier
@@ -81,134 +97,202 @@ fun FarmerSearchScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .widthIn(max = 560.dp)
+                            .widthIn(max = 580.dp)
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            text = "Search Farmer by Aadhaar",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
+                            text = "Search Farmer By",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = BhoomgaadiDarkGreen
                         )
 
-                        OutlinedTextField(
-                            value = aadhaarInput,
-                            onValueChange = { aadhaarInput = it.filter { c -> c.isDigit() }.take(12) },
-                            placeholder = { Text("1234 5678 9012") },
-                            label = { Text(strings.enterAadhaar) },
-                            leadingIcon = { Icon(Icons.Filled.CreditCard, contentDescription = null) },
-                            trailingIcon = {
-                                if (aadhaarInput.isNotEmpty()) {
-                                    IconButton(onClick = { aadhaarInput = "" }) {
-                                        Icon(Icons.Filled.Clear, contentDescription = "Clear")
-                                    }
-                                }
-                            },
-                            supportingText = { Text("${aadhaarInput.length}/12 digits") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = CardWhite,
-                                unfocusedContainerColor = CardWhite
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("search_aadhaar_input")
-                        )
-
-                        FieldActionButton(
-                            text = strings.search,
-                            icon = Icons.Filled.Search,
-                            color = BhoomgaadiDarkGreen,
-                            enabled = aadhaarInput.length == 12,
-                            testTag = "search_aadhaar_button",
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = { viewModel.lookupFarmerByAadhaar(aadhaarInput) }
-                        )
-
-                        Surface(
-                            color = SecondaryLightBlue.copy(alpha = 0.65f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Enter 12-digit Aadhaar number to find an existing farmer from the Master Data. Registration is required only for new farmers.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextPrimary,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-
-                        // Optional Browse / Search by Name or Village toggle
+                        // 3 Clean Search Mode Selector Chips: Aadhaar, Bhoomgaadi Code, Farmer Name
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "Master Register (${farmers.size} farmers)",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = BhoomgaadiDarkGreen
-                            )
-                            TextButton(onClick = { showBrowseList = !showBrowseList }) {
-                                Text(if (showBrowseList) "Hide List" else "Browse by Name/Village")
+                            FarmerSearchMode.entries.forEach { mode ->
+                                val selected = searchMode == mode
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        searchMode = mode
+                                        if (mode == FarmerSearchMode.FARMER_NAME) {
+                                            viewModel.updateSearchQuery("")
+                                        }
+                                    },
+                                    label = {
+                                        Text(
+                                            text = mode.label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BhoomgaadiDarkGreen,
+                                        selectedLabelColor = Color.White
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("search_mode_${mode.name.lowercase()}")
+                                )
                             }
                         }
 
-                        if (showBrowseList) {
-                            OutlinedTextField(
-                                value = directoryQuery,
-                                onValueChange = viewModel::updateSearchQuery,
-                                placeholder = { Text("Filter by name, village, block, SHG...") },
-                                leadingIcon = { Icon(Icons.Filled.FilterList, contentDescription = null) },
-                                singleLine = true,
-                                shape = RoundedCornerShape(10.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = CardWhite,
-                                    unfocusedContainerColor = CardWhite
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(farmers.take(40), key = { it.farmerUuid }) { f ->
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .clickable { viewModel.selectFoundFarmer(f) },
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = CardDefaults.cardColors(containerColor = CardWhite),
-                                        border = BorderStroke(1.dp, BorderGray)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(f.farmerName, fontWeight = FontWeight.Bold)
-                                                Text(
-                                                    "${f.village}, ${f.block} • ${formatAadhaarSpaced(f.aadhaarNumber)}",
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
+                        when (searchMode) {
+                            FarmerSearchMode.AADHAAR -> {
+                                OutlinedTextField(
+                                    value = aadhaarInput,
+                                    onValueChange = { aadhaarInput = it.filter { c -> c.isDigit() }.take(12) },
+                                    placeholder = { Text("1234 5678 9012") },
+                                    label = { Text(strings.enterAadhaar) },
+                                    leadingIcon = { Icon(Icons.Filled.CreditCard, contentDescription = null) },
+                                    trailingIcon = {
+                                        if (aadhaarInput.isNotEmpty()) {
+                                            IconButton(onClick = { aadhaarInput = "" }) {
+                                                Icon(Icons.Filled.Clear, contentDescription = "Clear")
                                             }
-                                            StatusPill(
-                                                text = f.membershipStatus.label,
-                                                bgColor = if (f.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiLightGreen else SurfaceSubtle,
-                                                fgColor = if (f.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiDarkGreen else TextSecondary
-                                            )
                                         }
-                                    }
+                                    },
+                                    supportingText = { Text("${aadhaarInput.length}/12 digits") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = CardWhite,
+                                        unfocusedContainerColor = CardWhite
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("search_aadhaar_input")
+                                )
+
+                                FieldActionButton(
+                                    text = strings.search,
+                                    icon = Icons.Filled.Search,
+                                    color = BhoomgaadiDarkGreen,
+                                    enabled = aadhaarInput.length == 12,
+                                    testTag = "search_aadhaar_button",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = { viewModel.lookupFarmerByAadhaar(aadhaarInput) }
+                                )
+
+                                Surface(
+                                    color = SecondaryLightBlue.copy(alpha = 0.65f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Enter 12-digit Aadhaar number to find an existing farmer and proceed directly to Create New Bill.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextPrimary,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
                                 }
+                                Spacer(Modifier.weight(1f))
                             }
-                        } else {
-                            Spacer(Modifier.weight(1f))
+
+                            FarmerSearchMode.FARMER_CODE -> {
+                                OutlinedTextField(
+                                    value = codeInput,
+                                    onValueChange = { codeInput = it.uppercase().take(24) },
+                                    placeholder = { Text("e.g., MGD001 or BMGD-102") },
+                                    label = { Text("Enter Bhoomgaadi Farmer Code") },
+                                    leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null) },
+                                    trailingIcon = {
+                                        if (codeInput.isNotEmpty()) {
+                                            IconButton(onClick = { codeInput = "" }) {
+                                                Icon(Icons.Filled.Clear, contentDescription = "Clear")
+                                            }
+                                        }
+                                    },
+                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = CardWhite,
+                                        unfocusedContainerColor = CardWhite
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("search_code_input")
+                                )
+
+                                FieldActionButton(
+                                    text = "Search by Code",
+                                    icon = Icons.Filled.Search,
+                                    color = BhoomgaadiDarkGreen,
+                                    enabled = codeInput.trim().isNotEmpty(),
+                                    testTag = "search_code_button",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = { viewModel.lookupFarmerByCode(codeInput) }
+                                )
+
+                                val codeMatches = remember(farmers, codeInput) {
+                                    val q = codeInput.trim()
+                                    if (q.isBlank()) farmers.filter { it.bmgdMemberCode.isNotBlank() }
+                                    else farmers.filter { it.bmgdMemberCode.contains(q, ignoreCase = true) }
+                                }
+
+                                Text(
+                                    text = "Matching Farmers by Code (${codeMatches.size})",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = TextSecondary
+                                )
+
+                                FarmerMatchList(
+                                    farmers = codeMatches,
+                                    emptyMessage = "No farmer found matching code \"$codeInput\".",
+                                    onSelect = { viewModel.selectFoundFarmer(it) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
+                            FarmerSearchMode.FARMER_NAME -> {
+                                OutlinedTextField(
+                                    value = directoryQuery,
+                                    onValueChange = viewModel::updateSearchQuery,
+                                    placeholder = { Text("Type farmer name, village, or code...") },
+                                    label = { Text("Search by Farmer Name") },
+                                    leadingIcon = { Icon(Icons.Filled.PersonSearch, contentDescription = null) },
+                                    trailingIcon = {
+                                        if (directoryQuery.isNotEmpty()) {
+                                            IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                                Icon(Icons.Filled.Clear, contentDescription = "Clear")
+                                            }
+                                        }
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = CardWhite,
+                                        unfocusedContainerColor = CardWhite
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("search_name_input")
+                                )
+
+                                Text(
+                                    text = "Matching Farmers (${farmers.size}) — tap to view details & create bill",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = TextSecondary
+                                )
+
+                                FarmerMatchList(
+                                    farmers = farmers,
+                                    emptyMessage = if (directoryQuery.isBlank()) {
+                                        "No farmers in database yet. Import Excel Master Data or Add Farmer."
+                                    } else {
+                                        "No farmers found matching \"$directoryQuery\"."
+                                    },
+                                    onSelect = { viewModel.selectFoundFarmer(it) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
 
                         FieldActionButton(
@@ -223,6 +307,7 @@ fun FarmerSearchScreen(
                 }
 
                 is AadhaarLookupState.NotFound -> {
+                    val isAadhaar = current.mode == FarmerSearchMode.AADHAAR
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -248,7 +333,11 @@ fun FarmerSearchScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "No farmer record found with Aadhaar number:",
+                            text = if (isAadhaar) {
+                                "No farmer record found with Aadhaar number:"
+                            } else {
+                                "No farmer record found with Bhoomgaadi Code:"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center
                         )
@@ -259,7 +348,7 @@ fun FarmerSearchScreen(
                             border = BorderStroke(1.dp, BorderGray)
                         ) {
                             Text(
-                                text = formatAadhaarSpaced(current.aadhaar),
+                                text = if (isAadhaar) formatAadhaarSpaced(current.query) else current.query,
                                 fontFamily = JetBrainsMono,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
@@ -281,7 +370,7 @@ fun FarmerSearchScreen(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 viewModel.resetAadhaarLookup()
-                                onAddFarmer(current.aadhaar)
+                                onAddFarmer(if (isAadhaar) current.query else "")
                             }
                         )
                         Spacer(Modifier.height(10.dp))
@@ -313,7 +402,7 @@ fun FarmerSearchScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Green Verified Banner (Layout 1 Screen 4)
+                        // Verified Banner with Farmer Photo Avatar (if captured)
                         Surface(
                             color = BhoomgaadiLightGreen,
                             shape = RoundedCornerShape(10.dp),
@@ -324,9 +413,20 @@ fun FarmerSearchScreen(
                                 modifier = Modifier.padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = BhoomgaadiGreen)
-                                Spacer(Modifier.width(10.dp))
-                                Column {
+                                if (f.farmerPhotoPath.isNotBlank() && File(f.farmerPhotoPath).exists()) {
+                                    AsyncImage(
+                                        model = File(f.farmerPhotoPath),
+                                        contentDescription = "Farmer Photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(54.dp)
+                                            .clip(CircleShape)
+                                    )
+                                } else {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = BhoomgaadiGreen, modifier = Modifier.size(32.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(strings.farmerFound, fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
                                     Text(
                                         "Aadhaar: ${formatAadhaarSpaced(f.aadhaarNumber)}",
@@ -334,6 +434,15 @@ fun FarmerSearchScreen(
                                         fontSize = 13.sp,
                                         color = TextSecondary
                                     )
+                                    if (f.bmgdMemberCode.isNotBlank()) {
+                                        Text(
+                                            "Code: ${f.bmgdMemberCode}",
+                                            fontFamily = JetBrainsMono,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BhoomgaadiDarkGreen
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -346,7 +455,7 @@ fun FarmerSearchScreen(
                                 "Cluster" to f.cluster,
                                 "Village" to f.village,
                                 "SHG Name" to f.shgName,
-                                "Membership No." to f.bmgdMemberCode,
+                                "Bhoomgaadi Code" to f.bmgdMemberCode,
                                 "Membership Status" to f.membershipStatus.label
                             )
                         )
@@ -385,7 +494,6 @@ fun FarmerSearchScreen(
 
                         Spacer(Modifier.height(4.dp))
 
-                        // 2x2 Action Grid matching Layout 1 Screen 4
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -395,7 +503,7 @@ fun FarmerSearchScreen(
                                 icon = Icons.Filled.NoteAdd,
                                 color = ProcurementAmber,
                                 testTag = "found_create_bill_btn",
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1.1f),
                                 onClick = {
                                     viewModel.resetAadhaarLookup()
                                     onCreateBillForFarmer(f.farmerUuid)
@@ -447,6 +555,88 @@ fun FarmerSearchScreen(
 }
 
 @Composable
+private fun FarmerMatchList(
+    farmers: List<FarmerEntity>,
+    emptyMessage: String,
+    onSelect: (FarmerEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (farmers.isEmpty()) {
+        Box(
+            modifier = modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = emptyMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+    } else {
+        LazyColumn(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(farmers.take(50), key = { it.farmerUuid }) { f ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelect(f) }
+                        .testTag("farmer_search_item_${f.aadhaarNumber}"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardWhite),
+                    border = BorderStroke(1.dp, BorderGray)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (f.farmerPhotoPath.isNotBlank() && File(f.farmerPhotoPath).exists()) {
+                            AsyncImage(
+                                model = File(f.farmerPhotoPath),
+                                contentDescription = f.farmerName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(CircleShape)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(f.farmerName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(
+                                text = "${f.village.ifBlank { "-" }}, ${f.block.ifBlank { "-" }}" +
+                                    if (f.bmgdMemberCode.isNotBlank()) " • Code: ${f.bmgdMemberCode}" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = BhoomgaadiDarkGreen,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Aadhaar: ${formatAadhaarSpaced(f.aadhaarNumber)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMono,
+                                color = TextSecondary
+                            )
+                        }
+                        StatusPill(
+                            text = f.membershipStatus.label,
+                            bgColor = if (f.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiLightGreen else SurfaceSubtle,
+                            fgColor = if (f.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiDarkGreen else TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun FarmerBankDetailsDialog(farmer: FarmerEntity, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -477,7 +667,11 @@ fun FarmerDocumentsDialog(farmer: FarmerEntity, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("Uploaded Documents", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                DocPreviewBlock("Farmer's Photo", farmer.farmerPhotoPath)
                 DocPreviewBlock("Aadhaar / ID Proof", farmer.idDocPhotoPath)
                 DocPreviewBlock("Bank Passbook", farmer.bankPassbookPhotoPath)
             }

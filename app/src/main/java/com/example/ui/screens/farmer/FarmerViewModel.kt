@@ -17,10 +17,16 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+enum class FarmerSearchMode(val label: String) {
+    AADHAAR("Aadhaar No."),
+    FARMER_CODE("Bhoomgaadi Code"),
+    FARMER_NAME("Farmer Name")
+}
+
 sealed interface AadhaarLookupState {
     data object Idle : AadhaarLookupState
     data class Found(val farmer: FarmerEntity) : AadhaarLookupState
-    data class NotFound(val aadhaar: String) : AadhaarLookupState
+    data class NotFound(val query: String, val mode: FarmerSearchMode = FarmerSearchMode.AADHAAR) : AadhaarLookupState
 }
 
 data class FarmerFormUiState(
@@ -47,6 +53,7 @@ data class FarmerFormUiState(
     val confirmAccountNumber: String = "",
     val ifsc: String = "",
     val branch: String = "",
+    val farmerPhotoPath: String = "",
     val idDocPhotoPath: String = "",
     val bankPassbookPhotoPath: String = "",
     val isSaving: Boolean = false,
@@ -104,7 +111,20 @@ class FarmerViewModel(private val repository: ProcurementRepository) : ViewModel
             _aadhaarLookup.value = if (found != null) {
                 AadhaarLookupState.Found(found)
             } else {
-                AadhaarLookupState.NotFound(digits)
+                AadhaarLookupState.NotFound(digits, FarmerSearchMode.AADHAAR)
+            }
+        }
+    }
+
+    fun lookupFarmerByCode(rawCode: String) {
+        val cleanCode = rawCode.trim()
+        if (cleanCode.isBlank()) return
+        viewModelScope.launch {
+            val found = repository.getFarmerByMemberCode(cleanCode)
+            _aadhaarLookup.value = if (found != null) {
+                AadhaarLookupState.Found(found)
+            } else {
+                AadhaarLookupState.NotFound(cleanCode, FarmerSearchMode.FARMER_CODE)
             }
         }
     }
@@ -154,6 +174,7 @@ class FarmerViewModel(private val repository: ProcurementRepository) : ViewModel
                 confirmAccountNumber = f.fullAccountNumber,
                 ifsc = f.ifsc,
                 branch = f.branch,
+                farmerPhotoPath = f.farmerPhotoPath,
                 idDocPhotoPath = f.idDocPhotoPath,
                 bankPassbookPhotoPath = f.bankPassbookPhotoPath
             )
@@ -292,6 +313,7 @@ class FarmerViewModel(private val repository: ProcurementRepository) : ViewModel
                 fullAccountNumber = if (s.bankAccountType == BankAccountType.NONE) "" else s.fullAccountNumber.trim(),
                 ifsc = if (s.bankAccountType == BankAccountType.NONE) "" else s.ifsc.trim().uppercase(),
                 branch = if (s.bankAccountType == BankAccountType.NONE) "" else s.branch.trim(),
+                farmerPhotoPath = s.farmerPhotoPath,
                 idDocPhotoPath = s.idDocPhotoPath,
                 bankPassbookPhotoPath = s.bankPassbookPhotoPath,
                 createdAt = now,

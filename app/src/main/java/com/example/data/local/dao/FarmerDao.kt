@@ -32,6 +32,9 @@ interface FarmerDao {
     @Query("SELECT * FROM Farmers WHERE aadhaarNumber = :aadhaar LIMIT 1")
     suspend fun getFarmerByAadhaar(aadhaar: String): FarmerEntity?
 
+    @Query("SELECT * FROM Farmers WHERE LOWER(TRIM(bmgdMemberCode)) = LOWER(TRIM(:code)) AND bmgdMemberCode != '' LIMIT 1")
+    suspend fun getFarmerByMemberCode(code: String): FarmerEntity?
+
     @Query("SELECT COUNT(*) FROM Farmers")
     fun observeFarmerCount(): Flow<Int>
 

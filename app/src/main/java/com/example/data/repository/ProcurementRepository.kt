@@ -226,6 +226,8 @@ class ProcurementRepository(
     suspend fun getFarmerByUuid(uuid: String): FarmerEntity? = db.farmerDao().getFarmerByUuid(uuid)
     suspend fun getFarmerByAadhaar(aadhaar: String): FarmerEntity? =
         db.farmerDao().getFarmerByAadhaar(aadhaar.filter { it.isDigit() })
+    suspend fun getFarmerByMemberCode(code: String): FarmerEntity? =
+        db.farmerDao().getFarmerByMemberCode(code.trim())
 
     suspend fun saveFarmer(farmer: FarmerEntity, isUpdate: Boolean, actorName: String = prefs.operatorName): Result<FarmerEntity> =
         withContext(Dispatchers.IO) {
@@ -381,7 +383,7 @@ class ProcurementRepository(
                     membershipEnrolled = draft.membershipEnrolled,
                     membershipAmountInr = draft.appliedMembershipAmount,
                     totalAmountInr = draft.grandTotalAmount,
-                    weighingSlipRef = draft.weighingSlipRef.trim(),
+                    weighingSlipRef = "",
                     remarks = draft.remarks.trim(),
                     operatorName = actor.displayName,
                     authorizedSignatory = prefs.authorizedSignatory,
@@ -497,7 +499,7 @@ class ProcurementRepository(
                     membershipEnrolled = draft.membershipEnrolled,
                     membershipAmountInr = draft.appliedMembershipAmount,
                     totalAmountInr = draft.grandTotalAmount,
-                    weighingSlipRef = draft.weighingSlipRef.trim(),
+                    weighingSlipRef = "",
                     remarks = draft.remarks.trim(),
                     revisionNumber = nextRevision,
                     lastEditedAtMillis = now,

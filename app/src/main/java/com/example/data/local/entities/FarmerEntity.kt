@@ -32,6 +32,7 @@ data class FarmerEntity(
     val fullAccountNumber: String,
     val ifsc: String,
     val branch: String,
+    val farmerPhotoPath: String = "",
     val idDocPhotoPath: String,
     val bankPassbookPhotoPath: String,
     val createdAt: Long,

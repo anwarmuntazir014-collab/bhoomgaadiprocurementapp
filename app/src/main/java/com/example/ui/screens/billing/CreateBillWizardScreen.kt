@@ -69,9 +69,13 @@ fun CreateBillWizardScreen(
         when (state.step) {
             BillWizardStep.FIND_FARMER -> onBackToHome()
             BillWizardStep.VERIFY_FARMER -> {
-                if (state.draft.isEditMode) onBackToHome() else viewModel.navigateStep(BillWizardStep.FIND_FARMER)
+                if (state.draft.isEditMode || state.startedWithPreselectedFarmer) onBackToHome()
+                else viewModel.navigateStep(BillWizardStep.FIND_FARMER)
             }
-            BillWizardStep.BILL_INFO -> viewModel.navigateStep(BillWizardStep.VERIFY_FARMER)
+            BillWizardStep.BILL_INFO -> {
+                if (state.draft.isEditMode || state.startedWithPreselectedFarmer) onBackToHome()
+                else viewModel.navigateStep(BillWizardStep.VERIFY_FARMER)
+            }
             BillWizardStep.ADD_ITEM -> {
                 if (state.draft.lines.isNotEmpty()) viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
                 else viewModel.navigateStep(BillWizardStep.BILL_INFO)
@@ -94,19 +98,19 @@ fun CreateBillWizardScreen(
 
     val (topTitle, topSubtitle) = when (state.step) {
         BillWizardStep.FIND_FARMER ->
-            (if (state.draft.isEditMode) strings.editBill else strings.createNewBill) to "Step 1: Find Farmer"
+            (if (state.draft.isEditMode) strings.editBill else strings.createNewBill) to "Find Farmer"
         BillWizardStep.VERIFY_FARMER ->
-            "Farmer Found" to "Step 1: Verify Farmer"
+            "Farmer Found" to "Verify Farmer"
         BillWizardStep.BILL_INFO ->
-            strings.billInformation to "Step 2: Procurement Details"
+            strings.billInformation to "Step 1: Procurement Details"
         BillWizardStep.ADD_ITEM ->
-            strings.addProcurementItem to "Step 3: Enter Produce Details"
+            strings.addProcurementItem to "Step 2: Enter Produce Details"
         BillWizardStep.ITEMS_LIST ->
-            strings.itemsInCurrentBill to "Step 3: Items in Current Bill"
+            strings.itemsInCurrentBill to "Step 2: Items in Current Bill"
         BillWizardStep.MEMBERSHIP ->
-            strings.membershipDetails to "Step 4: Membership"
+            strings.membershipDetails to "Step 3: Membership"
         BillWizardStep.SUMMARY ->
-            strings.billSummary to if (state.draft.isEditMode) "Edit Bill ${state.draft.editingBillNumber}" else "Step 5: Review Before Final Save"
+            strings.billSummary to if (state.draft.isEditMode) "Edit Bill ${state.draft.editingBillNumber}" else "Step 4: Review Before Final Save"
         BillWizardStep.CREATED_SUCCESS ->
             (if (state.draft.isEditMode) "Bill Updated Successfully" else strings.billCreated) to state.createdBill?.header?.billNumber
     }
@@ -156,6 +160,7 @@ fun CreateBillWizardScreen(
                     }
 
                     BillWizardStep.BILL_INFO -> BillInfoStep(
+                        farmer = state.draft.selectedFarmer,
                         procurementDateMillis = state.draft.procurementDateMillis,
                         locations = locations,
                         selectedLocation = state.draft.selectedLocation,
@@ -165,7 +170,7 @@ fun CreateBillWizardScreen(
                         onDateChange = viewModel::updateProcurementDate,
                         onSelectLocation = viewModel::selectLocation,
                         onSelectGodown = viewModel::selectGodown,
-                        onBack = { viewModel.navigateStep(BillWizardStep.VERIFY_FARMER) },
+                        onBack = { handleBack() },
                         onNext = {
                             if (state.draft.lines.isNotEmpty()) viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
                             else viewModel.navigateStep(BillWizardStep.ADD_ITEM)
@@ -233,7 +238,6 @@ fun CreateBillWizardScreen(
                                     }
                                 },
                                 onPreviewReceipt = { onOpenReceiptPreview(saved.header.billUuid) },
-                                onCreateNewBill = { viewModel.startNewBill() },
                                 onBackToHome = onBackToHome
                             )
                         }
@@ -478,6 +482,20 @@ private fun VerifyFarmerStep(
             title = { Text(strings.viewDocuments, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Farmer's Photo", fontWeight = FontWeight.SemiBold)
+                    if (farmer.farmerPhotoPath.isNotBlank() && File(farmer.farmerPhotoPath).exists()) {
+                        AsyncImage(
+                            model = File(farmer.farmerPhotoPath),
+                            contentDescription = "Farmer photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Text("Not uploaded yet", color = TextSecondary)
+                    }
                     Text("Aadhaar / ID Proof", fontWeight = FontWeight.SemiBold)
                     if (farmer.idDocPhotoPath.isNotBlank() && File(farmer.idDocPhotoPath).exists()) {
                         AsyncImage(
@@ -518,6 +536,7 @@ private fun VerifyFarmerStep(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BillInfoStep(
+    farmer: FarmerEntity?,
     procurementDateMillis: Long,
     locations: List<com.example.data.local.entities.LocationEntity>,
     selectedLocation: com.example.data.local.entities.LocationEntity?,
@@ -532,6 +551,24 @@ private fun BillInfoStep(
 ) {
     val strings = LocalAppStrings.current
     var showDatePicker by remember { mutableStateOf(false) }
+
+    if (farmer != null) {
+        Surface(
+            color = BhoomgaadiLightGreen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Farmer: ${farmer.farmerName}", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+                Text(
+                    "Aadhaar: ${formatAadhaarSpaced(farmer.aadhaarNumber)} • ${farmer.village}, ${farmer.block}" +
+                        if (farmer.bmgdMemberCode.isNotBlank()) " • ${farmer.bmgdMemberCode}" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+        }
+    }
 
     SectionCard {
         Text("Procurement Date", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
@@ -1115,7 +1152,7 @@ private fun BillSummaryStep(
     signatory: String,
     billNoPreview: String,
     isSubmitting: Boolean,
-    onUpdateMeta: (String, String, String) -> Unit,
+    onUpdateMeta: (String, String) -> Unit,
     onEditItems: () -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -1192,11 +1229,11 @@ private fun BillSummaryStep(
         }
     }
 
-    SectionCard(title = if (draft.isEditMode) "Mandatory Edit Reason & Notes" else "Optional Slip Ref / Remarks") {
+    SectionCard(title = if (draft.isEditMode) "Mandatory Edit Reason & Remarks" else "Remarks (Optional)") {
         if (draft.isEditMode) {
             OutlinedTextField(
                 value = draft.editReason,
-                onValueChange = { onUpdateMeta(draft.weighingSlipRef, draft.remarks, it) },
+                onValueChange = { onUpdateMeta(draft.remarks, it) },
                 label = { Text("Reason for Editing Bill *") },
                 placeholder = { Text("e.g., Corrected bag count after re-weighment") },
                 shape = RoundedCornerShape(10.dp),
@@ -1207,17 +1244,8 @@ private fun BillSummaryStep(
             Spacer(Modifier.height(10.dp))
         }
         OutlinedTextField(
-            value = draft.weighingSlipRef,
-            onValueChange = { onUpdateMeta(it, draft.remarks, draft.editReason) },
-            label = { Text("Weighing Slip Ref (Optional)") },
-            singleLine = true,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
             value = draft.remarks,
-            onValueChange = { onUpdateMeta(draft.weighingSlipRef, it, draft.editReason) },
+            onValueChange = { onUpdateMeta(it, draft.editReason) },
             label = { Text("Remarks (Optional)") },
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth()
@@ -1255,7 +1283,6 @@ private fun BillCreatedSuccessStep(
     onPrint3Copies: () -> Unit,
     onReprint: () -> Unit,
     onPreviewReceipt: () -> Unit,
-    onCreateNewBill: () -> Unit,
     onBackToHome: () -> Unit
 ) {
     val h = saved.header
@@ -1336,18 +1363,9 @@ private fun BillCreatedSuccessStep(
             onClick = onPreviewReceipt
         )
         FieldActionButton(
-            text = strings.createNewBill,
-            icon = Icons.Filled.NoteAdd,
-            color = ProcurementAmber,
-            testTag = "bill_success_new_bill_btn",
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onCreateNewBill
-        )
-        FieldActionButton(
             text = strings.backToHome,
             icon = Icons.Filled.Home,
-            color = SlateTileBg,
-            contentColor = TextPrimary,
+            color = BhoomgaadiDarkGreen,
             testTag = "bill_success_home_btn",
             modifier = Modifier.fillMaxWidth(),
             onClick = onBackToHome

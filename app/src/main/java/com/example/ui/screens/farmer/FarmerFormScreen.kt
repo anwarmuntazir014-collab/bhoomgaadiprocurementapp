@@ -44,7 +44,7 @@ import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.*
 import java.io.File
 
-private enum class DocTarget { ID_PROOF, PASSBOOK }
+private enum class DocTarget { FARMER_PHOTO, ID_PROOF, PASSBOOK }
 
 @Composable
 fun FarmerFormScreen(
@@ -448,6 +448,16 @@ fun FarmerFormScreen(
                     2 -> {
                         SectionCard(title = strings.uploadDocuments) {
                             DocumentPhotoRow(
+                                label = "Farmer's Photo (Optional)",
+                                photoPath = state.farmerPhotoPath,
+                                onCaptureCamera = { requestCameraCapture(DocTarget.FARMER_PHOTO) },
+                                onPickGallery = { launchPhotoPicker(DocTarget.FARMER_PHOTO) },
+                                onClear = { viewModel.updateForm { it.copy(farmerPhotoPath = "") } }
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            HorizontalDivider(color = BorderGray)
+                            Spacer(Modifier.height(14.dp))
+                            DocumentPhotoRow(
                                 label = "Aadhaar / ID Document",
                                 photoPath = state.idDocPhotoPath,
                                 onCaptureCamera = { requestCameraCapture(DocTarget.ID_PROOF) },
@@ -491,6 +501,17 @@ fun FarmerFormScreen(
                             }
                         }
                         if (saved != null) {
+                            if (saved.farmerPhotoPath.isNotBlank() && File(saved.farmerPhotoPath).exists()) {
+                                AsyncImage(
+                                    model = File(saved.farmerPhotoPath),
+                                    contentDescription = "Farmer Photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(84.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .align(Alignment.CenterHorizontally)
+                                )
+                            }
                             KeyValueTable(
                                 rows = listOf(
                                     "Aadhaar Number" to formatAadhaarSpaced(saved.aadhaarNumber),
@@ -632,6 +653,7 @@ private fun DocumentPhotoRow(
 private fun applyDocPath(viewModel: FarmerViewModel, target: DocTarget, path: String) {
     viewModel.updateForm {
         when (target) {
+            DocTarget.FARMER_PHOTO -> it.copy(farmerPhotoPath = path)
             DocTarget.ID_PROOF -> it.copy(idDocPhotoPath = path)
             DocTarget.PASSBOOK -> it.copy(bankPassbookPhotoPath = path)
         }
