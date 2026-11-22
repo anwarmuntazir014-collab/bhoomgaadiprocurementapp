@@ -2,6 +2,7 @@ package com.example.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.domain.model.AppLanguage
 import java.util.Calendar
 
 class AppPreferences(context: Context) {
@@ -9,8 +10,8 @@ class AppPreferences(context: Context) {
         context.getSharedPreferences("bhoomgaadi_config", Context.MODE_PRIVATE)
 
     var deviceCode: String
-        get() = prefs.getString("device_code", "KT01") ?: "KT01"
-        set(value) = prefs.edit().putString("device_code", value.trim().uppercase().ifBlank { "KT01" }).apply()
+        get() = prefs.getString("device_code", "DNT-KTK") ?: "DNT-KTK"
+        set(value) = prefs.edit().putString("device_code", value.trim().uppercase().ifBlank { "DNT-KTK" }).apply()
 
     var procurementYear: Int
         get() = prefs.getInt("procurement_year", Calendar.getInstance().get(Calendar.YEAR))
@@ -23,6 +24,17 @@ class AppPreferences(context: Context) {
     var operatorName: String
         get() = prefs.getString("operator_name", "Field Officer") ?: "Field Officer"
         set(value) = prefs.edit().putString("operator_name", value.trim()).apply()
+
+    var membershipFeeInr: Double
+        get() = prefs.getFloat("membership_fee_inr", 1100f).toDouble()
+        set(value) = prefs.edit().putFloat("membership_fee_inr", value.coerceAtLeast(0.0).toFloat()).apply()
+
+    var appLanguage: AppLanguage
+        get() {
+            val code = prefs.getString("app_language", AppLanguage.ENGLISH.code)
+            return AppLanguage.entries.find { it.code == code } ?: AppLanguage.ENGLISH
+        }
+        set(value) = prefs.edit().putString("app_language", value.code).apply()
 
     var driveRootFolderId: String
         get() = prefs.getString("drive_root_folder_id", "") ?: ""

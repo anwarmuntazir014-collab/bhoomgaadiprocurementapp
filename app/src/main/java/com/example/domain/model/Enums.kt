@@ -1,5 +1,15 @@
 package com.example.domain.model
 
+enum class UserRole(val label: String, val hindiLabel: String) {
+    ADMIN("Admin", "एडमिन"),
+    OFFICER("Procurement Officer", "खरीद अधिकारी")
+}
+
+enum class AppLanguage(val code: String, val displayLabel: String) {
+    ENGLISH("en", "EN"),
+    HINDI("hi", "हिं")
+}
+
 enum class MembershipStatus(val label: String) {
     MEMBER("Member"),
     NON_MEMBER("Non-Member")
@@ -29,7 +39,7 @@ enum class RecordStatus(val label: String) {
 }
 
 enum class BillStatus(val label: String) {
-    CONFIRMED("Confirmed"),
+    CONFIRMED("Finalized"),
     CANCELLED("Cancelled/Void")
 }
 
@@ -58,6 +68,9 @@ enum class AuditActionType(val label: String) {
     FARMER_ADDED("Farmer Registered"),
     FARMER_UPDATED("Farmer Profile Updated"),
     BANK_DETAILS_UPDATED("Bank Details Updated"),
+    FARMERS_IMPORTED("Excel Master Imported"),
     BILL_CREATED("Bill Created"),
-    BILL_CANCELLED("Bill Cancelled/Voided")
+    BILL_EDITED("Bill Edited / Revised"),
+    BILL_CANCELLED("Bill Cancelled/Voided"),
+    USER_MANAGED("User Account Updated")
 }

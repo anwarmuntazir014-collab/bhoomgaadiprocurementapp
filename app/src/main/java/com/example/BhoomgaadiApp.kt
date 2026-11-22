@@ -34,11 +34,10 @@ class BhoomgaadiApp : Application() {
         csvExportManager = CsvExportManager(this, dbProvider)
         backupManager = DatabaseBackupManager(this, dbProvider)
 
-        // Warm up DB and ensure master catalog is seeded on first launch
         appScope.launch {
             val db = BhoomgaadiDatabase.getInstance(this@BhoomgaadiApp)
             db.openHelper.writableDatabase
-            BhoomgaadiDatabase.seedReferenceMasters(db.masterDao())
+            BhoomgaadiDatabase.seedReferenceMasters(db.masterDao(), db.geoDao())
         }
     }
 }

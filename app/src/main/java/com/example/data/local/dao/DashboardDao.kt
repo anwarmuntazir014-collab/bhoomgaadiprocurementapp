@@ -20,10 +20,11 @@ interface DashboardDao {
             COALESCE(SUM(CASE WHEN billStatus = 'CONFIRMED' THEN totalAmountInr ELSE 0.0 END), 0.0) AS totalAmountInr,
             COALESCE(SUM(CASE WHEN driveUploadStatus != 'UPLOADED' THEN 1 ELSE 0 END), 0) AS pendingUploads
         FROM BillHeaders
-        WHERE (:year = 0 OR procurementYear = :year)
+        WHERE billDateMillis >= :fromMillis
+          AND (:locationName = '' OR locationNameSnapshot = :locationName)
         """
     )
-    fun observeSummary(year: Int): Flow<DashboardSummary>
+    fun observeSummaryFiltered(fromMillis: Long, locationName: String): Flow<DashboardSummary>
 
     @Query(
         """
@@ -36,12 +37,13 @@ interface DashboardDao {
         FROM BillItems bi
         INNER JOIN BillHeaders bh ON bh.billUuid = bi.billUuid
         WHERE bh.billStatus = 'CONFIRMED'
-          AND (:year = 0 OR bh.procurementYear = :year)
+          AND bh.billDateMillis >= :fromMillis
+          AND (:locationName = '' OR bh.locationNameSnapshot = :locationName)
         GROUP BY bi.productId, bi.stockItemNameSnapshot
-        ORDER BY totalAmountInr DESC
+        ORDER BY totalQuantityKg DESC
         """
     )
-    fun observeProductBreakdown(year: Int): Flow<List<ProductBreakdownItem>>
+    fun observeProductBreakdownFiltered(fromMillis: Long, locationName: String): Flow<List<ProductBreakdownItem>>
 
     @Query(
         """
@@ -52,12 +54,13 @@ interface DashboardDao {
             COALESCE(SUM(totalAmountInr), 0.0) AS totalAmountInr
         FROM BillHeaders
         WHERE billStatus = 'CONFIRMED'
-          AND (:year = 0 OR procurementYear = :year)
+          AND billDateMillis >= :fromMillis
+          AND (:locationName = '' OR locationNameSnapshot = :locationName)
         GROUP BY locationNameSnapshot
         ORDER BY totalAmountInr DESC
         """
     )
-    fun observeLocationBreakdown(year: Int): Flow<List<LocationBreakdownItem>>
+    fun observeLocationBreakdownFiltered(fromMillis: Long, locationName: String): Flow<List<LocationBreakdownItem>>
 
     @Query(
         """
@@ -68,11 +71,12 @@ interface DashboardDao {
             COALESCE(SUM(totalAmountInr), 0.0) AS totalAmountInr
         FROM BillHeaders
         WHERE billStatus = 'CONFIRMED'
-          AND (:year = 0 OR procurementYear = :year)
+          AND billDateMillis >= :fromMillis
+          AND (:locationName = '' OR locationNameSnapshot = :locationName)
         GROUP BY billDateIso
         ORDER BY billDateIso DESC
         LIMIT 14
         """
     )
-    fun observeRecentDailyTotals(year: Int): Flow<List<DailyProcurementItem>>
+    fun observeRecentDailyTotalsFiltered(fromMillis: Long, locationName: String): Flow<List<DailyProcurementItem>>
 }

@@ -1,44 +1,55 @@
 package com.example.ui.screens.dashboard
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.domain.model.ProductBreakdownItem
 import com.example.ui.components.*
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.*
-import java.util.Calendar
+import kotlin.math.max
 
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     onBack: () -> Unit
 ) {
-    val selectedYear by viewModel.selectedYear.collectAsStateWithLifecycle()
+    val selectedPeriod by viewModel.selectedPeriod.collectAsStateWithLifecycle()
+    val selectedLocation by viewModel.selectedLocation.collectAsStateWithLifecycle()
+    val allLocations by viewModel.allLocations.collectAsStateWithLifecycle()
     val summary by viewModel.summary.collectAsStateWithLifecycle()
-    val productBreakdown by viewModel.productBreakdown.collectAsStateWithLifecycle()
-    val locationBreakdown by viewModel.locationBreakdown.collectAsStateWithLifecycle()
-    val dailyTotals by viewModel.dailyTotals.collectAsStateWithLifecycle()
+    val registeredFarmers by viewModel.registeredFarmerCount.collectAsStateWithLifecycle()
+    val products by viewModel.productBreakdown.collectAsStateWithLifecycle()
+    val locations by viewModel.locationBreakdown.collectAsStateWithLifecycle()
     val auditLogs by viewModel.recentAuditLogs.collectAsStateWithLifecycle()
+    val strings = LocalAppStrings.current
 
-    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+    val locationOptions = remember(allLocations) {
+        listOf("") + allLocations.map { it.locationName }
+    }
 
     BhoomgaadiScaffold(
-        title = "Live Procurement Summary",
-        subtitle = if (selectedYear == 0) "All Seasons" else "Season $selectedYear",
+        title = strings.dashboard,
+        subtitle = "${selectedPeriod.label} • ${selectedLocation.ifBlank { "All Locations" }}",
         onBack = onBack
     ) { padding ->
         Box(
@@ -50,193 +61,133 @@ fun DashboardScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 720.dp)
+                    .widthIn(max = 640.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Year selector chips
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = selectedYear == currentYear,
-                        onClick = { viewModel.selectYear(currentYear) },
-                        label = { Text("$currentYear") }
+                // Top 2 Filter Dropdowns matching Layout 3 Screen 8
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SimpleDropdown(
+                        label = "Period",
+                        selectedText = selectedPeriod.label,
+                        items = DashboardPeriod.entries,
+                        itemLabel = { it.label },
+                        onSelected = viewModel::selectPeriod,
+                        testTag = "dashboard_period_dropdown",
+                        modifier = Modifier.weight(1f)
                     )
-                    FilterChip(
-                        selected = selectedYear == currentYear - 1,
-                        onClick = { viewModel.selectYear(currentYear - 1) },
-                        label = { Text("${currentYear - 1}") }
-                    )
-                    FilterChip(
-                        selected = selectedYear == 0,
-                        onClick = { viewModel.selectYear(0) },
-                        label = { Text("All Years") }
+                    SimpleDropdown(
+                        label = "Location",
+                        selectedText = selectedLocation.ifBlank { "All Locations" },
+                        items = locationOptions,
+                        itemLabel = { it.ifBlank { "All Locations" } },
+                        onSelected = viewModel::selectLocation,
+                        testTag = "dashboard_location_dropdown",
+                        modifier = Modifier.weight(1f)
                     )
                 }
 
-                // KPI Grid
-                SectionCard(title = "Procurement Totals", containerColor = BhoomgaadiLightGreen) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Total Payout", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-                            Text(
-                                formatCurrency(summary.totalAmountInr),
-                                fontFamily = JetBrainsMono,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = BhoomgaadiDarkGreen
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                            Text("Net Procured Qty", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-                            Text(
-                                "${formatQty(summary.totalQuantityKg)} kg",
-                                fontFamily = JetBrainsMono,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = ProcurementOrange
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = BhoomgaadiGreen.copy(alpha = 0.25f))
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        MiniStat("Confirmed", "${summary.totalBillsConfirmed}", BhoomgaadiDarkGreen)
-                        MiniStat("Voided", "${summary.totalBillsCancelled}", DangerRed)
-                        MiniStat("Farmers Paid", "${summary.totalFarmersProcured}", SecondaryBlue)
-                        MiniStat("Pending Sync", "${summary.pendingUploads}", ProcurementOrange)
+                // 2x2 Pastel KPI Grid matching Layout 3 Screen 8
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    PastelKpiCard(
+                        title = "Total Bills",
+                        value = summary.totalBillsConfirmed.toString(),
+                        subtitle = if (summary.totalBillsCancelled > 0) "${summary.totalBillsCancelled} cancelled" else "Finalized",
+                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                        bgColor = BhoomgaadiLightGreen,
+                        accentColor = BhoomgaadiDarkGreen,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PastelKpiCard(
+                        title = "Total Farmers",
+                        value = summary.totalFarmersProcured.toString(),
+                        subtitle = "$registeredFarmers in master",
+                        icon = Icons.Filled.People,
+                        bgColor = SecondaryLightBlue,
+                        accentColor = SecondaryBlue,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    PastelKpiCard(
+                        title = "Total Weight (kg)",
+                        value = formatQty(summary.totalQuantityKg),
+                        subtitle = "Net weight",
+                        icon = Icons.Filled.Scale,
+                        bgColor = ProcurementLightOrange,
+                        accentColor = ProcurementOrange,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PastelKpiCard(
+                        title = "Total Amount (₹)",
+                        value = formatCurrencyWhole(summary.totalAmountInr),
+                        subtitle = "${summary.pendingUploads} PDFs pending sync",
+                        icon = Icons.Filled.CurrencyRupee,
+                        bgColor = DangerLightRed,
+                        accentColor = DangerRed,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Vertical Colored Bar Chart: Procurement by Product (kg) matching Layout 3 Screen 8
+                SectionCard(title = "Procurement by Product (kg)") {
+                    if (products.isEmpty()) {
+                        Text("No finalized procurement records in this period.", color = TextSecondary)
+                    } else {
+                        ProductVerticalBarChart(products = products.take(6))
                     }
                 }
 
-                if (productBreakdown.isEmpty()) {
-                    EmptyStateCard(
-                        icon = Icons.Filled.BarChart,
-                        title = "No Confirmed Bills Yet",
-                        description = "Crop-wise weighment bars, center totals, and daily trends update automatically as you issue bills offline."
-                    )
-                } else {
-                    // Product Breakdown Bar Chart
-                    val maxProductAmt = productBreakdown.maxOfOrNull { it.totalAmountInr }?.coerceAtLeast(1.0) ?: 1.0
-                    SectionCard(title = "Produce Breakdown") {
-                        productBreakdown.forEach { item ->
-                            val fraction = (item.totalAmountInr / maxProductAmt).toFloat().coerceIn(0.05f, 1f)
-                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(item.stockItemName, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                // Location Breakdown
+                if (locations.isNotEmpty()) {
+                    SectionCard(title = "Location Breakdown") {
+                        locations.forEachIndexed { idx, loc ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(loc.locationName, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        formatCurrency(item.totalAmountInr),
-                                        fontFamily = JetBrainsMono,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BhoomgaadiDarkGreen
+                                        "${loc.billCount} bills • ${formatQty(loc.totalQuantityKg)} kg",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary
                                     )
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(10.dp)
-                                        .clip(RoundedCornerShape(5.dp))
-                                        .background(SurfaceSubtle)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(fraction)
-                                            .fillMaxHeight()
-                                            .clip(RoundedCornerShape(5.dp))
-                                            .background(BhoomgaadiGreen)
-                                    )
-                                }
-                                Spacer(Modifier.height(2.dp))
                                 Text(
-                                    "${formatQty(item.totalQuantityKg)} kg across ${item.lineCount} weighment line(s)",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextSecondary
+                                    formatCurrencyWhole(loc.totalAmountInr),
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = JetBrainsMono,
+                                    color = BhoomgaadiDarkGreen
                                 )
                             }
-                        }
-                    }
-
-                    // Location Breakdown
-                    if (locationBreakdown.isNotEmpty()) {
-                        SectionCard(title = "Center / Location Totals") {
-                            locationBreakdown.forEachIndexed { idx, loc ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(loc.locationName, fontWeight = FontWeight.SemiBold)
-                                        Text(
-                                            "${loc.billCount} bill(s) • ${formatQty(loc.totalQuantityKg)} kg",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    }
-                                    Text(
-                                        formatCurrency(loc.totalAmountInr),
-                                        fontFamily = JetBrainsMono,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SecondaryBlue
-                                    )
-                                }
-                                if (idx < locationBreakdown.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
-                            }
-                        }
-                    }
-
-                    // Daily Procurement Trend
-                    if (dailyTotals.isNotEmpty()) {
-                        SectionCard(title = "Recent Daily Procurement") {
-                            dailyTotals.forEachIndexed { idx, day ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text(day.dayLabel, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                                        Text("${day.billCount} bill(s) • ${formatQty(day.totalQuantityKg)} kg", style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    Text(
-                                        formatCurrency(day.totalAmountInr),
-                                        fontFamily = JetBrainsMono,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BhoomgaadiDarkGreen
-                                    )
-                                }
-                                if (idx < dailyTotals.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
-                            }
+                            if (idx < locations.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
                         }
                     }
                 }
 
-                // Recent Activity Audit Log
+                // Recent Activity / Audit Log
                 if (auditLogs.isNotEmpty()) {
-                    SectionCard(title = "Recent Center Activity Log") {
+                    SectionCard(title = "Recent Activity Log") {
                         auditLogs.take(10).forEachIndexed { idx, log ->
-                            Column(modifier = Modifier.padding(vertical = 5.dp)) {
-                                Text(log.actionType.label, fontWeight = FontWeight.SemiBold, color = BhoomgaadiDarkGreen)
-                                Text(log.summary, style = MaterialTheme.typography.bodyMedium)
+                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(log.actionType.label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BhoomgaadiDarkGreen)
+                                Text(log.summary, style = MaterialTheme.typography.bodySmall)
                                 Text(
-                                    "${formatDateTime(log.timestampMillis)} • ${log.performedBy}",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    "${log.performedBy} • ${formatDateTime(log.timestampMillis)}",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = TextSecondary
                                 )
                             }
-                            if (idx < minOf(auditLogs.size, 10) - 1) HorizontalDivider(color = BorderGray.copy(alpha = 0.4f))
+                            if (idx < minOf(auditLogs.size, 10) - 1) HorizontalDivider(color = BorderGray.copy(alpha = 0.45f))
                         }
                     }
                 }
@@ -246,9 +197,110 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun MiniStat(label: String, value: String, color: androidx.compose.ui.graphics.Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = color)
-        Text(label, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+private fun PastelKpiCard(
+    title: String,
+    value: String,
+    subtitle: String,
+    icon: ImageVector,
+    bgColor: Color,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = bgColor,
+        shape = RoundedCornerShape(14.dp),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accentColor,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = value,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontFamily = JetBrainsMono,
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProductVerticalBarChart(products: List<ProductBreakdownItem>) {
+    val barColors = listOf(
+        BhoomgaadiGreen,
+        SecondaryBlue,
+        ProcurementAmber,
+        DashboardPurple,
+        BhoomgaadiDarkGreen,
+        DangerRed
+    )
+    val maxQty = max(products.maxOfOrNull { it.totalQuantityKg } ?: 1.0, 1.0)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(190.dp)
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        products.forEachIndexed { idx, item ->
+            val ratio = (item.totalQuantityKg / maxQty).toFloat().coerceIn(0.08f, 1f)
+            val color = barColors[idx % barColors.size]
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                Text(
+                    text = if (item.totalQuantityKg >= 10) "${item.totalQuantityKg.toInt()}" else formatQty(item.totalQuantityKg),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = JetBrainsMono,
+                    color = TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.72f)
+                        .height((115f * ratio).dp)
+                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                        .background(color)
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = item.stockItemName,
+                    fontSize = 10.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 12.sp
+                )
+            }
+        }
     }
 }

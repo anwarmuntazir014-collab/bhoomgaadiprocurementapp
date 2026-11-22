@@ -1,11 +1,11 @@
 package com.example.ui.screens.billing
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,109 +18,104 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.example.data.local.entities.FarmerEntity
 import com.example.data.local.entities.ProductEntity
+import com.example.data.local.entities.UserEntity
+import com.example.domain.model.MembershipStatus
+import com.example.pdf.BillPdfGenerator
+import com.example.pdf.PdfPrintShareHelper
 import com.example.ui.components.*
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.*
+import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateBillWizardScreen(
     viewModel: CreateBillViewModel,
-    preselectedFarmerUuid: String?,
-    onBack: () -> Unit,
-    onQuickAddFarmer: () -> Unit,
-    onBillCreated: (billUuid: String) -> Unit
+    currentUser: UserEntity,
+    onBackToHome: () -> Unit,
+    onQuickAddFarmer: (prefillAadhaar: String) -> Unit,
+    onEditFarmer: (farmerUuid: String) -> Unit,
+    onOpenReceiptPreview: (billUuid: String) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val farmers by viewModel.matchingFarmers.collectAsStateWithLifecycle()
     val products by viewModel.activeProducts.collectAsStateWithLifecycle()
     val locations by viewModel.activeLocations.collectAsStateWithLifecycle()
     val godowns by viewModel.godownsForSelectedLocation.collectAsStateWithLifecycle()
+    val matchingFarmers by viewModel.matchingFarmers.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    val strings = LocalAppStrings.current
     val snackbarHostState = remember { SnackbarHostState() }
-
-    LaunchedEffect(preselectedFarmerUuid) {
-        if (!preselectedFarmerUuid.isNullOrBlank()) {
-            viewModel.preselectFarmerById(preselectedFarmerUuid)
-        }
-    }
-
-    LaunchedEffect(state.createdBillUuid) {
-        val id = state.createdBillUuid
-        if (id != null) {
-            viewModel.resetWizard()
-            onBillCreated(id)
-        }
-    }
 
     LaunchedEffect(state.errorMessage) {
         state.errorMessage?.let { snackbarHostState.showSnackbar(it) }
     }
 
-    val stepTitles = listOf("1. Farmer & Center", "2. Weighment Items", "3. Review & Issue")
-
-    BhoomgaadiScaffold(
-        title = "Create Procurement Bill",
-        subtitle = "${stepTitles[state.step]} • ${viewModel.nextBillNumberPreview()}",
-        onBack = {
-            if (state.step > 0) viewModel.goToStep(state.step - 1) else onBack()
-        },
-        snackbarHostState = snackbarHostState,
-        bottomBar = {
-            Surface(color = CardWhite, shadowElevation = 6.dp) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .imePadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (state.step > 0) {
-                        OutlinedButton(
-                            onClick = { viewModel.goToStep(state.step - 1) },
-                            modifier = Modifier
-                                .heightIn(min = 52.dp)
-                                .testTag("wizard_prev_button"),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("Back")
-                        }
-                    }
-                    when (state.step) {
-                        0 -> FieldActionButton(
-                            text = "Continue to Weighment",
-                            icon = Icons.Filled.ArrowForward,
-                            testTag = "wizard_next_step_1",
-                            modifier = Modifier.weight(1f),
-                            onClick = { viewModel.goToStep(1) }
-                        )
-                        1 -> FieldActionButton(
-                            text = "Review (${state.draft.lines.size} items • ${formatCurrency(state.draft.grandTotalAmount)})",
-                            icon = Icons.Filled.FactCheck,
-                            color = ProcurementAmber,
-                            testTag = "wizard_next_step_2",
-                            modifier = Modifier.weight(1f),
-                            onClick = { viewModel.goToStep(2) }
-                        )
-                        else -> FieldActionButton(
-                            text = if (state.isSubmitting) "Generating PDF..." else "Confirm & Issue Voucher",
-                            icon = Icons.Filled.PictureAsPdf,
-                            color = BhoomgaadiDarkGreen,
-                            enabled = !state.isSubmitting,
-                            testTag = "wizard_confirm_bill_button",
-                            modifier = Modifier.weight(1f),
-                            onClick = viewModel::confirmAndCreateBill
-                        )
-                    }
+    fun handleBack() {
+        when (state.step) {
+            BillWizardStep.FIND_FARMER -> onBackToHome()
+            BillWizardStep.VERIFY_FARMER -> {
+                if (state.draft.isEditMode) onBackToHome() else viewModel.navigateStep(BillWizardStep.FIND_FARMER)
+            }
+            BillWizardStep.BILL_INFO -> viewModel.navigateStep(BillWizardStep.VERIFY_FARMER)
+            BillWizardStep.ADD_ITEM -> {
+                if (state.draft.lines.isNotEmpty()) viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
+                else viewModel.navigateStep(BillWizardStep.BILL_INFO)
+            }
+            BillWizardStep.ITEMS_LIST -> viewModel.navigateStep(BillWizardStep.BILL_INFO)
+            BillWizardStep.MEMBERSHIP -> viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
+            BillWizardStep.SUMMARY -> {
+                val farmer = state.draft.selectedFarmer
+                if (farmer != null && farmer.membershipStatus == MembershipStatus.NON_MEMBER) {
+                    viewModel.navigateStep(BillWizardStep.MEMBERSHIP)
+                } else {
+                    viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
                 }
             }
+            BillWizardStep.CREATED_SUCCESS -> onBackToHome()
         }
+    }
+
+    BackHandler { handleBack() }
+
+    val (topTitle, topSubtitle) = when (state.step) {
+        BillWizardStep.FIND_FARMER ->
+            (if (state.draft.isEditMode) strings.editBill else strings.createNewBill) to "Step 1: Find Farmer"
+        BillWizardStep.VERIFY_FARMER ->
+            "Farmer Found" to "Step 1: Verify Farmer"
+        BillWizardStep.BILL_INFO ->
+            strings.billInformation to "Step 2: Procurement Details"
+        BillWizardStep.ADD_ITEM ->
+            strings.addProcurementItem to "Step 3: Enter Produce Details"
+        BillWizardStep.ITEMS_LIST ->
+            strings.itemsInCurrentBill to "Step 3: Items in Current Bill"
+        BillWizardStep.MEMBERSHIP ->
+            strings.membershipDetails to "Step 4: Membership"
+        BillWizardStep.SUMMARY ->
+            strings.billSummary to if (state.draft.isEditMode) "Edit Bill ${state.draft.editingBillNumber}" else "Step 5: Review Before Final Save"
+        BillWizardStep.CREATED_SUCCESS ->
+            (if (state.draft.isEditMode) "Bill Updated Successfully" else strings.billCreated) to state.createdBill?.header?.billNumber
+    }
+
+    BhoomgaadiScaffold(
+        title = topTitle,
+        subtitle = topSubtitle,
+        onBack = { handleBack() },
+        snackbarHostState = snackbarHostState
     ) { padding ->
         Box(
             modifier = Modifier
@@ -131,34 +126,118 @@ fun CreateBillWizardScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 720.dp)
+                    .widthIn(max = 600.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Step Progress Strip
-                StepProgressBar(currentStep = state.step, labels = listOf("Farmer", "Weighment", "Confirm"))
-
                 when (state.step) {
-                    0 -> StepFarmerAndCenter(
-                        state = state,
-                        farmers = farmers,
+                    BillWizardStep.FIND_FARMER -> FindFarmerStep(
+                        aadhaarInput = state.aadhaarInput,
+                        farmerNotFoundAadhaar = state.farmerNotFoundAadhaar,
+                        matchingFarmers = matchingFarmers,
+                        onAadhaarChange = viewModel::updateAadhaarInput,
+                        onSearch = viewModel::searchFarmerByAadhaar,
+                        onSelectFarmer = viewModel::selectFarmerFromList,
+                        onAddNewFarmer = onQuickAddFarmer,
+                        onBackToHome = onBackToHome
+                    )
+
+                    BillWizardStep.VERIFY_FARMER -> {
+                        val farmer = state.draft.selectedFarmer
+                        if (farmer != null) {
+                            VerifyFarmerStep(
+                                farmer = farmer,
+                                onEditFarmer = { onEditFarmer(farmer.farmerUuid) },
+                                onContinue = { viewModel.navigateStep(BillWizardStep.BILL_INFO) },
+                                onBack = { viewModel.navigateStep(BillWizardStep.FIND_FARMER) }
+                            )
+                        }
+                    }
+
+                    BillWizardStep.BILL_INFO -> BillInfoStep(
+                        procurementDateMillis = state.draft.procurementDateMillis,
                         locations = locations,
+                        selectedLocation = state.draft.selectedLocation,
                         godowns = godowns,
-                        onQueryChange = viewModel::updateFarmerQuery,
-                        onSelectFarmer = viewModel::selectFarmer,
+                        selectedGodown = state.draft.selectedGodown,
+                        signatory = viewModel.authorizedSignatory,
+                        onDateChange = viewModel::updateProcurementDate,
                         onSelectLocation = viewModel::selectLocation,
                         onSelectGodown = viewModel::selectGodown,
-                        onQuickAddFarmer = onQuickAddFarmer
+                        onBack = { viewModel.navigateStep(BillWizardStep.VERIFY_FARMER) },
+                        onNext = {
+                            if (state.draft.lines.isNotEmpty()) viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
+                            else viewModel.navigateStep(BillWizardStep.ADD_ITEM)
+                        }
                     )
-                    1 -> StepWeighmentItems(
-                        state = state,
+
+                    BillWizardStep.ADD_ITEM -> AddItemStep(
+                        farmer = state.draft.selectedFarmer,
+                        godownName = state.draft.selectedGodown?.godownName.orEmpty(),
                         products = products,
-                        onAddLine = viewModel::addLineItem,
-                        onRemoveLine = viewModel::removeLineItem
+                        editingLine = state.draft.lines.find { it.id == state.editingLineId },
+                        onSaveLine = viewModel::saveLineItem,
+                        onBackToList = {
+                            if (state.draft.lines.isNotEmpty()) viewModel.navigateStep(BillWizardStep.ITEMS_LIST)
+                            else viewModel.navigateStep(BillWizardStep.BILL_INFO)
+                        }
                     )
-                    else -> StepReviewAndConfirm(
-                        state = state,
-                        nextBillNumber = viewModel.nextBillNumberPreview(),
-                        onUpdateMeta = viewModel::updateMeta
+
+                    BillWizardStep.ITEMS_LIST -> ItemsListStep(
+                        draft = state.draft,
+                        onAddAnother = { viewModel.navigateStep(BillWizardStep.ADD_ITEM) },
+                        onEditLine = viewModel::startEditLine,
+                        onDeleteLine = viewModel::removeLineItem,
+                        onContinue = { viewModel.navigateStep(BillWizardStep.MEMBERSHIP) }
                     )
+
+                    BillWizardStep.MEMBERSHIP -> MembershipStep(
+                        draft = state.draft,
+                        feeInr = viewModel.membershipFeeInr,
+                        onSetEnroll = viewModel::setMembershipEnrolled,
+                        onBack = { viewModel.navigateStep(BillWizardStep.ITEMS_LIST) },
+                        onContinue = { viewModel.navigateStep(BillWizardStep.SUMMARY) }
+                    )
+
+                    BillWizardStep.SUMMARY -> BillSummaryStep(
+                        draft = state.draft,
+                        signatory = viewModel.authorizedSignatory,
+                        billNoPreview = viewModel.nextBillNumberPreview(),
+                        isSubmitting = state.isSubmitting,
+                        onUpdateMeta = viewModel::updateMeta,
+                        onEditItems = { viewModel.navigateStep(BillWizardStep.ITEMS_LIST) },
+                        onConfirm = { viewModel.confirmAndSaveBill(currentUser) }
+                    )
+
+                    BillWizardStep.CREATED_SUCCESS -> {
+                        val saved = state.createdBill
+                        if (saved != null) {
+                            BillCreatedSuccessStep(
+                                saved = saved,
+                                isRevision = state.draft.isEditMode,
+                                onPrint3Copies = {
+                                    val pdf = File(saved.header.pdfFilePath)
+                                    if (pdf.exists()) {
+                                        PdfPrintShareHelper.printPdf(
+                                            context,
+                                            pdf,
+                                            "${saved.header.billNumber} (3 Copies)"
+                                        )
+                                    }
+                                },
+                                onReprint = {
+                                    val pdf = File(saved.header.pdfFilePath)
+                                    if (pdf.exists()) {
+                                        PdfPrintShareHelper.printPdf(context, pdf, saved.header.billNumber)
+                                    }
+                                },
+                                onPreviewReceipt = { onOpenReceiptPreview(saved.header.billUuid) },
+                                onCreateNewBill = { viewModel.startNewBill() },
+                                onBackToHome = onBackToHome
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -166,468 +245,1112 @@ fun CreateBillWizardScreen(
 }
 
 @Composable
-private fun StepProgressBar(currentStep: Int, labels: List<String>) {
-    Surface(color = CardWhite, tonalElevation = 1.dp) {
+private fun FindFarmerStep(
+    aadhaarInput: String,
+    farmerNotFoundAadhaar: String?,
+    matchingFarmers: List<FarmerEntity>,
+    onAadhaarChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onSelectFarmer: (FarmerEntity) -> Unit,
+    onAddNewFarmer: (String) -> Unit,
+    onBackToHome: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var showQuickDirectory by remember { mutableStateOf(false) }
+
+    SectionCard {
+        Text(strings.enterAadhaar, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = aadhaarInput,
+            onValueChange = { onAadhaarChange(it.filter { c -> c.isDigit() || c == ' ' }.take(14)) },
+            placeholder = { Text("1234 5678 9012") },
+            leadingIcon = { Icon(Icons.Filled.CreditCard, contentDescription = null) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bill_aadhaar_input")
+        )
+        Spacer(Modifier.height(12.dp))
+        FieldActionButton(
+            text = strings.searchFarmer,
+            icon = Icons.Filled.Search,
+            color = BhoomgaadiDarkGreen,
+            testTag = "bill_search_farmer_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onSearch
+        )
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            color = BhoomgaadiMintTint,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Enter 12-digit Aadhaar number to search for farmer in the offline database. Existing Master Data farmers load instantly without re-registration.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                modifier = Modifier.padding(12.dp)
+            )
+        }
+    }
+
+    if (farmerNotFoundAadhaar != null) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = DangerLightRed),
+            border = BorderStroke(1.dp, DangerRed.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Filled.PersonOff, contentDescription = null, tint = DangerRed, modifier = Modifier.size(34.dp))
+                Text(strings.farmerNotFound, fontWeight = FontWeight.Bold, color = DangerRed)
+                Text(
+                    "No farmer found for Aadhaar ${formatAadhaarSpaced(farmerNotFoundAadhaar)}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                FieldActionButton(
+                    text = strings.addFarmer,
+                    icon = Icons.Filled.PersonAdd,
+                    color = SecondaryBlue,
+                    testTag = "bill_not_found_add_farmer_btn",
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { onAddNewFarmer(farmerNotFoundAadhaar) }
+                )
+            }
+        }
+    }
+
+    OutlinedButton(
+        onClick = { showQuickDirectory = !showQuickDirectory },
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .testTag("bill_toggle_farmer_list"),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Icon(Icons.Filled.Groups, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(if (showQuickDirectory) "Hide Farmer Directory" else "Select from Registered Farmers (${matchingFarmers.size})")
+    }
+
+    if (showQuickDirectory) {
+        SectionCard(title = "Tap Farmer to Select") {
+            if (matchingFarmers.isEmpty()) {
+                Text("No farmers found. Import Excel Master Data or add a new farmer.", color = TextSecondary)
+            } else {
+                matchingFarmers.take(15).forEach { farmer ->
+                    Surface(
+                        color = BhoomgaadiMintTint,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { onSelectFarmer(farmer) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(farmer.farmerName, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "${formatAadhaarSpaced(farmer.aadhaarNumber)} • ${farmer.village}, ${farmer.block}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            }
+                            StatusPill(
+                                text = farmer.membershipStatus.label,
+                                bgColor = if (farmer.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiLightGreen else ProcurementLightOrange,
+                                fgColor = if (farmer.membershipStatus == MembershipStatus.MEMBER) BhoomgaadiDarkGreen else ProcurementOrange
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    FieldActionButton(
+        text = strings.backToHome,
+        icon = Icons.Filled.Home,
+        color = SlateTileBg,
+        contentColor = TextPrimary,
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onBackToHome
+    )
+}
+
+@Composable
+private fun VerifyFarmerStep(
+    farmer: FarmerEntity,
+    onEditFarmer: () -> Unit,
+    onContinue: () -> Unit,
+    onBack: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var showDocsDialog by remember { mutableStateOf(false) }
+
+    Surface(
+        color = BhoomgaadiLightGreen,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, BhoomgaadiGreen.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = BhoomgaadiGreen)
+            Spacer(Modifier.width(8.dp))
+            Text(strings.farmerFound, fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+        }
+    }
+
+    KeyValueTable(
+        rows = listOf(
+            "Aadhaar Number" to formatAadhaarSpaced(farmer.aadhaarNumber),
+            "Farmer Name" to farmer.farmerName,
+            "Father/Husband" to farmer.fatherOrHusbandName,
+            strings.block to farmer.block,
+            strings.cluster to farmer.cluster,
+            strings.village to farmer.village,
+            "SHG Name" to farmer.shgName,
+            "Membership Status" to farmer.membershipStatus.label,
+            "Membership No." to farmer.bmgdMemberCode,
+            "Bank Name" to farmer.bankName,
+            "Account Number" to farmer.fullAccountNumber,
+            "IFSC Code" to farmer.ifsc
+        )
+    )
+
+    FieldActionButton(
+        text = "View / Update Details",
+        icon = Icons.Filled.Edit,
+        color = SecondaryLightBlue,
+        contentColor = SecondaryBlue,
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onEditFarmer
+    )
+
+    FieldActionButton(
+        text = strings.viewDocuments,
+        icon = Icons.Filled.Description,
+        color = SlateTileBg,
+        contentColor = TextPrimary,
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { showDocsDialog = true }
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        FieldActionButton(
+            text = "Continue to Bill",
+            icon = Icons.Filled.ArrowForward,
+            color = BhoomgaadiDarkGreen,
+            testTag = "bill_verify_continue_btn",
+            modifier = Modifier.weight(1.4f),
+            onClick = onContinue
+        )
+        FieldActionButton(
+            text = strings.back,
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            modifier = Modifier.weight(0.9f),
+            onClick = onBack
+        )
+    }
+
+    if (showDocsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDocsDialog = false },
+            title = { Text(strings.viewDocuments, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Aadhaar / ID Proof", fontWeight = FontWeight.SemiBold)
+                    if (farmer.idDocPhotoPath.isNotBlank() && File(farmer.idDocPhotoPath).exists()) {
+                        AsyncImage(
+                            model = File(farmer.idDocPhotoPath),
+                            contentDescription = "Aadhaar photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Text("Not uploaded yet", color = TextSecondary)
+                    }
+                    Text("Bank Passbook", fontWeight = FontWeight.SemiBold)
+                    if (farmer.bankPassbookPhotoPath.isNotBlank() && File(farmer.bankPassbookPhotoPath).exists()) {
+                        AsyncImage(
+                            model = File(farmer.bankPassbookPhotoPath),
+                            contentDescription = "Passbook photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Text("Not uploaded yet", color = TextSecondary)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDocsDialog = false }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BillInfoStep(
+    procurementDateMillis: Long,
+    locations: List<com.example.data.local.entities.LocationEntity>,
+    selectedLocation: com.example.data.local.entities.LocationEntity?,
+    godowns: List<com.example.data.local.entities.GodownEntity>,
+    selectedGodown: com.example.data.local.entities.GodownEntity?,
+    signatory: String,
+    onDateChange: (Long) -> Unit,
+    onSelectLocation: (com.example.data.local.entities.LocationEntity) -> Unit,
+    onSelectGodown: (com.example.data.local.entities.GodownEntity) -> Unit,
+    onBack: () -> Unit,
+    onNext: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    SectionCard {
+        Text("Procurement Date", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = formatShortDate(procurementDateMillis),
+            onValueChange = {},
+            readOnly = true,
+            trailingIcon = {
+                IconButton(onClick = { showDatePicker = true }) {
+                    Icon(Icons.Filled.CalendarToday, contentDescription = "Pick Date")
+                }
+            },
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showDatePicker = true }
+                .testTag("bill_date_field")
+        )
+
+        Spacer(Modifier.height(12.dp))
+        SimpleDropdown(
+            label = "Procurement Location *",
+            selectedText = selectedLocation?.locationName ?: "Select Location",
+            items = locations,
+            itemLabel = { it.locationName },
+            onSelected = onSelectLocation,
+            testTag = "bill_location_dropdown"
+        )
+
+        Spacer(Modifier.height(12.dp))
+        SimpleDropdown(
+            label = "Temporary Godown *",
+            selectedText = selectedGodown?.godownName
+                ?: if (selectedLocation == null) "Select Location first" else "Select Temporary Godown",
+            items = godowns,
+            itemLabel = { it.godownName },
+            onSelected = onSelectGodown,
+            enabled = selectedLocation != null,
+            testTag = "bill_godown_dropdown"
+        )
+
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = signatory,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Authorized Signatory (From Settings)") },
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            color = SecondaryLightBlue,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Info, contentDescription = null, tint = SecondaryBlue)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Permanent Godown will be filled later by the logistics team on the printed receipt.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryBlue
+                )
+            }
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        FieldActionButton(
+            text = strings.back,
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            modifier = Modifier.weight(0.8f),
+            onClick = onBack
+        )
+        FieldActionButton(
+            text = "Start Procurement",
+            icon = Icons.Filled.PlayArrow,
+            color = BhoomgaadiDarkGreen,
+            testTag = "bill_start_procurement_btn",
+            modifier = Modifier.weight(1.4f),
+            onClick = onNext
+        )
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = procurementDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let(onDateChange)
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun AddItemStep(
+    farmer: FarmerEntity?,
+    godownName: String,
+    products: List<ProductEntity>,
+    editingLine: com.example.domain.model.BillDraftLineItem?,
+    onSaveLine: (ProductEntity, Int, Double, String, Double?) -> Unit,
+    onBackToList: () -> Unit
+) {
+    var selectedProduct by remember(editingLine?.id, products) {
+        mutableStateOf(editingLine?.product ?: products.firstOrNull())
+    }
+    var bagsText by remember(editingLine?.id) { mutableStateOf(editingLine?.bagCount?.toString() ?: "") }
+    var wtPerBagText by remember(editingLine?.id) {
+        mutableStateOf(editingLine?.weightPerBagKg?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() } ?: "")
+    }
+    var moistureText by remember(editingLine?.id) { mutableStateOf(editingLine?.moisturePercent ?: "") }
+    var rateText by remember(editingLine?.id, selectedProduct?.productId) {
+        mutableStateOf(
+            if (editingLine != null && editingLine.product.productId == selectedProduct?.productId) {
+                String.format(java.util.Locale.US, "%.2f", editingLine.ratePerKg)
+            } else {
+                selectedProduct?.let { String.format(java.util.Locale.US, "%.2f", it.ratePerKg) }.orEmpty()
+            }
+        )
+    }
+
+    val bags = bagsText.toIntOrNull() ?: 0
+    val wtPerBag = wtPerBagText.toDoubleOrNull() ?: 0.0
+    val rate = rateText.toDoubleOrNull() ?: (selectedProduct?.ratePerKg ?: 0.0)
+    val liveTotalWeight = bags * wtPerBag
+    val liveAmount = liveTotalWeight * rate
+
+    if (farmer != null) {
+        Surface(
+            color = BhoomgaadiLightGreen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Farmer: ${farmer.farmerName}", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+                Text(
+                    "Aadhaar: ${formatAadhaarSpaced(farmer.aadhaarNumber)}  |  Village: ${farmer.village}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Text(
+                    "Temporary Godown: $godownName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+        }
+    }
+
+    SectionCard {
+        SimpleDropdown(
+            label = "Product *",
+            selectedText = selectedProduct?.stockItemName ?: "Select Product",
+            items = products,
+            itemLabel = { "${it.stockItemName} (₹${formatQty(it.ratePerKg)}/kg)" },
+            onSelected = { prod ->
+                selectedProduct = prod
+                rateText = String.format(java.util.Locale.US, "%.2f", prod.ratePerKg)
+            },
+            testTag = "bill_item_product_dropdown"
+        )
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = bagsText,
+            onValueChange = { bagsText = it.filter { c -> c.isDigit() }.take(5) },
+            label = { Text("No. of Bags *") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bill_item_bags_input")
+        )
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = wtPerBagText,
+            onValueChange = { wtPerBagText = it.filter { c -> c.isDigit() || c == '.' }.take(8) },
+            label = { Text("Weight per Bag (kg) *") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bill_item_wt_per_bag_input")
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = moistureText,
+                onValueChange = { moistureText = it.filter { c -> c.isDigit() || c == '.' || c == '%' }.take(6) },
+                label = { Text("Moisture (%)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("bill_item_moisture_input")
+            )
+            OutlinedTextField(
+                value = rateText,
+                onValueChange = { rateText = it.filter { c -> c.isDigit() || c == '.' }.take(8) },
+                label = { Text("Rate (₹/kg)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("bill_item_rate_input")
+            )
+        }
+        Text(
+            text = "Rate auto-filled from Rate Master (editable if needed)",
+            style = MaterialTheme.typography.labelSmall,
+            color = TextSecondary,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                color = BhoomgaadiLightGreen,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Total Weight (kg)", style = MaterialTheme.typography.labelMedium, color = BhoomgaadiDarkGreen)
+                    Text(
+                        formatQty(liveTotalWeight),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = JetBrainsMono,
+                        color = BhoomgaadiDarkGreen
+                    )
+                }
+            }
+            Surface(
+                color = BhoomgaadiLightGreen,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Amount (₹)", style = MaterialTheme.typography.labelMedium, color = BhoomgaadiDarkGreen)
+                    Text(
+                        formatCurrency(liveAmount),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = JetBrainsMono,
+                        color = BhoomgaadiDarkGreen
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        FieldActionButton(
+            text = if (editingLine != null) "Update Item" else "Add to Bill",
+            icon = Icons.Filled.AddShoppingCart,
+            color = BhoomgaadiDarkGreen,
+            testTag = "bill_add_item_submit_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+                val prod = selectedProduct ?: return@FieldActionButton
+                onSaveLine(prod, bags, wtPerBag, moistureText, rateText.toDoubleOrNull())
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            FieldActionButton(
+                text = "Clear",
+                color = SlateTileBg,
+                contentColor = TextPrimary,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    bagsText = ""
+                    wtPerBagText = ""
+                    moistureText = ""
+                }
+            )
+            FieldActionButton(
+                text = "Back",
+                color = SlateTileBg,
+                contentColor = TextPrimary,
+                modifier = Modifier.weight(1f),
+                onClick = onBackToList
+            )
+        }
+    }
+}
+
+@Composable
+private fun ItemsListStep(
+    draft: com.example.domain.model.BillDraft,
+    onAddAnother: () -> Unit,
+    onEditLine: (String) -> Unit,
+    onDeleteLine: (String) -> Unit,
+    onContinue: () -> Unit
+) {
+    val farmer = draft.selectedFarmer
+    if (farmer != null) {
+        Surface(
+            color = BhoomgaadiLightGreen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Farmer: ${farmer.farmerName}", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+                Text(
+                    "Aadhaar: ${formatAadhaarSpaced(farmer.aadhaarNumber)}  |  Village: ${farmer.village}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Text(
+                    "Temporary Godown: ${draft.selectedGodown?.godownName.orEmpty()}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+        }
+    }
+
+    // Compact table matching Layout 2 Screen 6
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, BorderGray, RoundedCornerShape(10.dp))
+            .background(CardWhite)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .background(SlateTileBg)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            labels.forEachIndexed { idx, label ->
-                val active = idx <= currentStep
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(if (active) BhoomgaadiGreen else BorderGray),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "${idx + 1}",
-                            color = CardWhite,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (active) BhoomgaadiDarkGreen else TextSecondary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepFarmerAndCenter(
-    state: CreateBillUiState,
-    farmers: List<com.example.data.local.entities.FarmerEntity>,
-    locations: List<com.example.data.local.entities.LocationEntity>,
-    godowns: List<com.example.data.local.entities.GodownEntity>,
-    onQueryChange: (String) -> Unit,
-    onSelectFarmer: (com.example.data.local.entities.FarmerEntity) -> Unit,
-    onSelectLocation: (com.example.data.local.entities.LocationEntity) -> Unit,
-    onSelectGodown: (com.example.data.local.entities.GodownEntity) -> Unit,
-    onQuickAddFarmer: () -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        // Center & Godown selection
-        item {
-            SectionCard(title = "Procurement Center & Godown") {
-                SimpleDropdown(
-                    label = "Procurement Location *",
-                    selectedText = state.draft.selectedLocation?.locationName ?: "Select Location",
-                    items = locations,
-                    itemLabel = { it.locationName },
-                    onSelected = onSelectLocation,
-                    testTag = "bill_location_dropdown"
-                )
-                Spacer(Modifier.height(10.dp))
-                SimpleDropdown(
-                    label = "Temporary Godown *",
-                    selectedText = state.draft.selectedGodown?.godownName
-                        ?: if (state.draft.selectedLocation == null) "Select Location First" else "Select Godown",
-                    items = godowns,
-                    itemLabel = { it.godownName },
-                    onSelected = onSelectGodown,
-                    enabled = state.draft.selectedLocation != null && godowns.isNotEmpty(),
-                    testTag = "bill_godown_dropdown"
-                )
-            }
+            Text("#", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.weight(0.4f))
+            Text("Product", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.weight(1.9f))
+            Text("Bags", fontWeight = FontWeight.Bold, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.7f))
+            Text("Wt", fontWeight = FontWeight.Bold, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+            Text("Amount", fontWeight = FontWeight.Bold, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1.2f))
+            Text("Act", fontWeight = FontWeight.Bold, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1.1f))
         }
 
-        // Selected Farmer Banner
-        if (state.draft.selectedFarmer != null) {
-            val f = state.draft.selectedFarmer
-            item {
-                SectionCard(
-                    title = "Selected Farmer",
-                    containerColor = BhoomgaadiLightGreen
-                ) {
-                    Text(f.farmerName, style = MaterialTheme.typography.titleLarge, color = BhoomgaadiDarkGreen)
-                    Spacer(Modifier.height(4.dp))
-                    InfoRow("Aadhaar", maskAadhaar(f.aadhaarNumber), monoValue = true)
-                    InfoRow("Village", "${f.village}${if (f.block.isNotBlank()) ", ${f.block}" else ""}")
-                    InfoRow("Bank Account", "${f.bankAccountType.label} (${f.ifsc.ifBlank { "No IFSC" }})")
-                }
-            }
-        }
-
-        // Farmer Picker
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Select Farmer",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BhoomgaadiDarkGreen,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onQuickAddFarmer, modifier = Modifier.testTag("bill_quick_add_farmer")) {
-                    Icon(Icons.Filled.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("New Farmer")
-                }
-            }
-            OutlinedTextField(
-                value = state.farmerQuery,
-                onValueChange = onQueryChange,
-                placeholder = { Text("Search farmer by name, Aadhaar, or village...") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardWhite, unfocusedContainerColor = CardWhite),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("bill_farmer_search_input")
+        if (draft.lines.isEmpty()) {
+            Text(
+                "No items added yet. Tap '+ Add Another Item'.",
+                color = TextSecondary,
+                modifier = Modifier.padding(16.dp)
             )
-        }
-
-        if (farmers.isEmpty()) {
-            item {
-                EmptyStateCard(
-                    icon = Icons.Filled.PersonSearch,
-                    title = "No Farmers Found",
-                    description = "Register a farmer profile first so their Aadhaar & bank details are frozen onto the bill.",
-                    actionLabel = "Register Farmer",
-                    onAction = onQuickAddFarmer
-                )
-            }
         } else {
-            items(farmers.take(15), key = { it.farmerUuid }) { farmer ->
-                val selected = state.draft.selectedFarmer?.farmerUuid == farmer.farmerUuid
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { onSelectFarmer(farmer) },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = if (selected) BhoomgaadiLightGreen else CardWhite),
-                    border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) BhoomgaadiGreen else BorderGray)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(farmer.farmerName, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${farmer.village} • ${maskAadhaar(farmer.aadhaarNumber)}",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        if (selected) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = BhoomgaadiGreen)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepWeighmentItems(
-    state: CreateBillUiState,
-    products: List<ProductEntity>,
-    onAddLine: (ProductEntity, Int, Double, Double, Double?, String, String) -> Unit,
-    onRemoveLine: (String) -> Unit
-) {
-    var selectedProduct by remember(products) { mutableStateOf(products.firstOrNull()) }
-    var bagsText by remember { mutableStateOf("1") }
-    var grossText by remember { mutableStateOf("") }
-    var tareText by remember { mutableStateOf("0.5") }
-    var rateText by remember(selectedProduct) {
-        mutableStateOf(selectedProduct?.ratePerKg?.let { formatQty(it) } ?: "")
-    }
-    var grade by remember { mutableStateOf("Grade A") }
-    var moisture by remember { mutableStateOf("") }
-
-    val grossVal = grossText.toDoubleOrNull() ?: 0.0
-    val tareVal = tareText.toDoubleOrNull() ?: 0.0
-    val netVal = (grossVal - tareVal).coerceAtLeast(0.0)
-    val rateVal = rateText.toDoubleOrNull() ?: (selectedProduct?.ratePerKg ?: 0.0)
-    val previewAmount = netVal * rateVal
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            SectionCard(title = "Add Weighed Produce Item") {
-                SimpleDropdown(
-                    label = "Produce / Stock Item *",
-                    selectedText = selectedProduct?.let { "${it.stockItemName} (₹${formatQty(it.ratePerKg)}/kg)" }
-                        ?: "Select Produce",
-                    items = products,
-                    itemLabel = { "${it.stockItemName} — ₹${formatQty(it.ratePerKg)}/kg" },
-                    onSelected = { prod ->
-                        selectedProduct = prod
-                        rateText = formatQty(prod.ratePerKg)
-                    },
-                    testTag = "bill_product_dropdown"
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = bagsText,
-                        onValueChange = { bagsText = it.filter { ch -> ch.isDigit() }.take(4) },
-                        label = { Text("Bags") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(0.7f)
-                    )
-                    OutlinedTextField(
-                        value = grossText,
-                        onValueChange = { grossText = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                        label = { Text("Gross Wt (kg) *") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .testTag("bill_gross_weight_input")
-                    )
-                    OutlinedTextField(
-                        value = tareText,
-                        onValueChange = { tareText = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                        label = { Text("Tare (kg)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(0.9f)
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = rateText,
-                        onValueChange = { rateText = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                        label = { Text("Rate ₹/kg") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = moisture,
-                        onValueChange = { moisture = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
-                        label = { Text("Moisture %") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Grade A", "Grade B", "FAQ").forEach { g ->
-                        FilterChip(
-                            selected = grade == g,
-                            onClick = { grade = g },
-                            label = { Text(g) }
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Surface(
-                    color = BhoomgaadiLightGreen,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Net Weight", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-                            Text(
-                                "${formatQty(netVal)} kg",
-                                fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                color = BhoomgaadiDarkGreen
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Line Payable", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-                            Text(
-                                formatCurrency(previewAmount),
-                                fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                color = ProcurementOrange
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                FieldActionButton(
-                    text = "Add Produce to Bill",
-                    icon = Icons.Filled.Add,
-                    enabled = selectedProduct != null && netVal > 0.0,
-                    testTag = "bill_add_line_button",
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        val prod = selectedProduct ?: return@FieldActionButton
-                        onAddLine(
-                            prod,
-                            bagsText.toIntOrNull() ?: 1,
-                            grossVal,
-                            tareVal,
-                            rateText.toDoubleOrNull(),
-                            grade,
-                            moisture
-                        )
-                        grossText = ""
-                        moisture = ""
-                    }
-                )
-            }
-        }
-
-        if (state.draft.lines.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Added Produce Lines (${state.draft.lines.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BhoomgaadiDarkGreen,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            items(state.draft.lines, key = { it.id }) { line ->
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardWhite),
-                    border = BorderStroke(1.dp, BorderGray),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(line.product.stockItemName, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${line.bagCount} bag(s) • Gross ${formatQty(line.grossWeightKg)} - Tare ${formatQty(line.tareWeightKg)} = Net ${formatQty(line.netQuantityKg)} kg",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "${line.qualityGrade} • Rate ₹${formatQty(line.ratePerKg)}/kg",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = BhoomgaadiDarkGreen
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                formatCurrency(line.lineAmount),
-                                fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
-                            IconButton(onClick = { onRemoveLine(line.id) }) {
-                                Icon(Icons.Filled.DeleteOutline, contentDescription = "Remove item", tint = DangerRed)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepReviewAndConfirm(
-    state: CreateBillUiState,
-    nextBillNumber: String,
-    onUpdateMeta: (String, String) -> Unit
-) {
-    val d = state.draft
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        SectionCard(title = "Voucher Summary", containerColor = BhoomgaadiLightGreen) {
-            InfoRow("Bill Number", nextBillNumber, boldValue = true, monoValue = true)
-            InfoRow("Farmer", d.selectedFarmer?.farmerName.orEmpty(), boldValue = true)
-            InfoRow("Village", d.selectedFarmer?.village.orEmpty())
-            InfoRow("Center", d.selectedLocation?.locationName.orEmpty())
-            InfoRow("Godown", d.selectedGodown?.godownName.orEmpty())
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BhoomgaadiGreen.copy(alpha = 0.25f))
-            InfoRow("Total Bags", "${d.totalBags}", boldValue = true, monoValue = true)
-            InfoRow("Total Net Weight", "${formatQty(d.totalQuantityKg)} kg", boldValue = true, monoValue = true)
-            InfoRow("Grand Total Payable", formatCurrency(d.grandTotalAmount), boldValue = true, monoValue = true)
-        }
-
-        SectionCard(title = "Items Breakdown") {
-            d.lines.forEachIndexed { idx, line ->
+            draft.lines.forEachIndexed { idx, line ->
+                HorizontalDivider(color = BorderGray.copy(alpha = 0.6f))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("${idx + 1}. ${line.product.stockItemName}", fontWeight = FontWeight.SemiBold)
+                    Text("${idx + 1}", fontSize = 12.sp, modifier = Modifier.weight(0.4f))
+                    Column(modifier = Modifier.weight(1.9f)) {
                         Text(
-                            "${formatQty(line.netQuantityKg)} kg × ₹${formatQty(line.ratePerKg)} (${line.qualityGrade})",
-                            style = MaterialTheme.typography.bodyMedium
+                            line.product.stockItemName,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${formatQty(line.weightPerBagKg)}kg/bag" +
+                                if (line.moisturePercent.isNotBlank()) " • M:${line.moisturePercent}%" else "",
+                            fontSize = 10.sp,
+                            color = TextSecondary
                         )
                     }
+                    Text("${line.bagCount}", fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.7f))
+                    Text(formatQty(line.netQuantityKg), fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
                     Text(
-                        formatCurrency(line.lineAmount),
-                        fontFamily = JetBrainsMono,
-                        fontWeight = FontWeight.Bold
+                        formatCurrencyWhole(line.lineAmount),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1.2f)
                     )
+                    Row(
+                        modifier = Modifier.weight(1.1f),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(
+                            onClick = { onEditLine(line.id) },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit item", tint = SecondaryBlue, modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(
+                            onClick = { onDeleteLine(line.id) },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete item", tint = DangerRed, modifier = Modifier.size(16.dp))
+                        }
+                    }
                 }
-                if (idx < d.lines.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
+            }
+        }
+    }
+
+    KeyValueTable(
+        rows = listOf(
+            "Total Bags" to draft.totalBags.toString(),
+            "Total Weight (kg)" to formatQty(draft.totalQuantityKg),
+            "Total Amount (₹)" to formatCurrency(draft.procurementAmountInr)
+        )
+    )
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        FieldActionButton(
+            text = "+ Add Item",
+            icon = Icons.Filled.Add,
+            color = SecondaryBlue,
+            testTag = "bill_add_another_item_btn",
+            modifier = Modifier.weight(1f),
+            onClick = onAddAnother
+        )
+        FieldActionButton(
+            text = "Continue",
+            icon = Icons.Filled.ArrowForward,
+            color = BhoomgaadiDarkGreen,
+            enabled = draft.lines.isNotEmpty(),
+            testTag = "bill_items_continue_btn",
+            modifier = Modifier.weight(1f),
+            onClick = onContinue
+        )
+    }
+}
+
+@Composable
+private fun MembershipStep(
+    draft: com.example.domain.model.BillDraft,
+    feeInr: Double,
+    onSetEnroll: (Boolean) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit
+) {
+    val farmer = draft.selectedFarmer
+    Surface(
+        color = BhoomgaadiLightGreen,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Farmer: ${farmer?.farmerName.orEmpty()}", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+            Text("Aadhaar: ${formatAadhaarSpaced(farmer?.aadhaarNumber.orEmpty())}", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Current Status:", style = MaterialTheme.typography.bodySmall)
+                StatusPill(
+                    text = farmer?.membershipStatus?.label ?: "Non-Member",
+                    bgColor = ProcurementLightOrange,
+                    fgColor = ProcurementOrange
+                )
+            }
+        }
+    }
+
+    SectionCard(title = "Does the farmer want to become a member?") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onSetEnroll(true) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = draft.membershipEnrolled,
+                onClick = { onSetEnroll(true) },
+                modifier = Modifier.testTag("bill_membership_yes")
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Yes, register as member (${formatCurrencyWhole(feeInr)})",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onSetEnroll(false) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = !draft.membershipEnrolled,
+                onClick = { onSetEnroll(false) },
+                modifier = Modifier.testTag("bill_membership_no")
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "No, do not want membership (₹ 0)",
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Surface(
+            color = SecondaryLightBlue,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Info, contentDescription = null, tint = SecondaryBlue)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "If you select Yes, the farmer's membership status will automatically update to Member in the Farmer Master after the bill is saved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryBlue
+                )
             }
         }
 
-        SectionCard(title = "Optional Slip Reference & Remarks") {
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            color = BhoomgaadiLightGreen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("Membership Amount (₹)", style = MaterialTheme.typography.labelMedium, color = BhoomgaadiDarkGreen)
+                Text(
+                    formatCurrencyWhole(draft.appliedMembershipAmount),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = JetBrainsMono,
+                    color = BhoomgaadiDarkGreen
+                )
+            }
+        }
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        FieldActionButton(
+            text = "Back",
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            modifier = Modifier.weight(0.9f),
+            onClick = onBack
+        )
+        FieldActionButton(
+            text = "Continue",
+            icon = Icons.Filled.ArrowForward,
+            color = BhoomgaadiDarkGreen,
+            testTag = "bill_membership_continue_btn",
+            modifier = Modifier.weight(1.3f),
+            onClick = onContinue
+        )
+    }
+}
+
+@Composable
+private fun BillSummaryStep(
+    draft: com.example.domain.model.BillDraft,
+    signatory: String,
+    billNoPreview: String,
+    isSubmitting: Boolean,
+    onUpdateMeta: (String, String, String) -> Unit,
+    onEditItems: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val farmer = draft.selectedFarmer
+    SectionCard(title = "Farmer & Procurement Details") {
+        KeyValueTable(
+            rows = listOf(
+                "Bill Number" to billNoPreview,
+                "Date" to formatShortDate(draft.procurementDateMillis),
+                "Aadhaar Number" to formatAadhaarSpaced(farmer?.aadhaarNumber.orEmpty()),
+                "Farmer Name" to farmer?.farmerName.orEmpty(),
+                "Father/Husband" to farmer?.fatherOrHusbandName.orEmpty(),
+                "Village / Block" to "${farmer?.village.orEmpty()}, ${farmer?.block.orEmpty()}",
+                "Membership" to if (draft.membershipEnrolled) "New Member (${formatCurrencyWhole(draft.appliedMembershipAmount)})" else (farmer?.membershipStatus?.label.orEmpty()),
+                "Location" to draft.selectedLocation?.locationName.orEmpty(),
+                "Temp. Godown" to draft.selectedGodown?.godownName.orEmpty(),
+                "Permanent Godown" to "(Filled by logistics)",
+                "Authorized Signatory" to signatory
+            )
+        )
+    }
+
+    SectionCard(title = "Items (${draft.lines.size})") {
+        draft.lines.forEachIndexed { idx, line ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("${idx + 1}. ${line.product.stockItemName}", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${line.bagCount} bags × ${formatQty(line.weightPerBagKg)} kg = ${formatQty(line.netQuantityKg)} kg @ ₹${formatQty(line.ratePerKg)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                Text(formatCurrency(line.lineAmount), fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono)
+            }
+            if (idx < draft.lines.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
+        }
+
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(color = BhoomgaadiDarkGreen)
+        Spacer(Modifier.height(8.dp))
+        InfoRow("Total Bags", draft.totalBags.toString(), boldValue = true)
+        InfoRow("Total Weight (kg)", formatQty(draft.totalQuantityKg), boldValue = true, monoValue = true)
+        InfoRow("Procurement Amount (₹)", formatCurrency(draft.procurementAmountInr), boldValue = true, monoValue = true)
+        InfoRow("Membership Amount (₹)", formatCurrency(draft.appliedMembershipAmount), boldValue = true, monoValue = true)
+
+        Spacer(Modifier.height(8.dp))
+        Surface(
+            color = BhoomgaadiLightGreen,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("TOTAL PAYABLE (₹)", fontWeight = FontWeight.ExtraBold, color = BhoomgaadiDarkGreen)
+                Text(
+                    formatCurrency(draft.grandTotalAmount),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = JetBrainsMono,
+                    color = BhoomgaadiDarkGreen
+                )
+            }
+        }
+    }
+
+    SectionCard(title = if (draft.isEditMode) "Mandatory Edit Reason & Notes" else "Optional Slip Ref / Remarks") {
+        if (draft.isEditMode) {
             OutlinedTextField(
-                value = d.weighingSlipRef,
-                onValueChange = { onUpdateMeta(it, d.remarks) },
-                label = { Text("Manual Weighing Slip / Token Ref") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
+                value = draft.editReason,
+                onValueChange = { onUpdateMeta(draft.weighingSlipRef, draft.remarks, it) },
+                label = { Text("Reason for Editing Bill *") },
+                placeholder = { Text("e.g., Corrected bag count after re-weighment") },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bill_edit_reason_input")
             )
             Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = d.remarks,
-                onValueChange = { onUpdateMeta(d.weighingSlipRef, it) },
-                label = { Text("Field Remarks") },
-                maxLines = 3,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
         }
+        OutlinedTextField(
+            value = draft.weighingSlipRef,
+            onValueChange = { onUpdateMeta(it, draft.remarks, draft.editReason) },
+            label = { Text("Weighing Slip Ref (Optional)") },
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = draft.remarks,
+            onValueChange = { onUpdateMeta(draft.weighingSlipRef, it, draft.editReason) },
+            label = { Text("Remarks (Optional)") },
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        FieldActionButton(
+            text = "Edit Items",
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            modifier = Modifier.weight(0.9f),
+            onClick = onEditItems
+        )
+        FieldActionButton(
+            text = when {
+                isSubmitting -> "Saving..."
+                draft.isEditMode -> "Save Revised Bill"
+                else -> "Confirm & Generate Bill"
+            },
+            icon = Icons.Filled.CheckCircle,
+            color = BhoomgaadiDarkGreen,
+            enabled = !isSubmitting,
+            testTag = "bill_confirm_generate_btn",
+            modifier = Modifier.weight(1.5f),
+            onClick = onConfirm
+        )
+    }
+}
+
+@Composable
+private fun BillCreatedSuccessStep(
+    saved: com.example.data.local.entities.BillWithItems,
+    isRevision: Boolean,
+    onPrint3Copies: () -> Unit,
+    onReprint: () -> Unit,
+    onPreviewReceipt: () -> Unit,
+    onCreateNewBill: () -> Unit,
+    onBackToHome: () -> Unit
+) {
+    val h = saved.header
+    val strings = LocalAppStrings.current
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(BhoomgaadiGreen),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+        }
+
+        Text(
+            text = if (isRevision) "Bill Revised & PDF Updated!" else strings.billCreated,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = BhoomgaadiDarkGreen
+        )
+
+        KeyValueTable(
+            rows = listOf(
+                "Bill Number" to h.billNumber,
+                "Date" to formatShortDate(h.billDateMillis),
+                "Farmer Name" to h.farmerNameSnapshot,
+                "Aadhaar" to formatAadhaarSpaced(h.farmerAadhaarSnapshot),
+                "Total Weight (kg)" to formatQty(h.totalQuantityKg),
+                "Total Payable (₹)" to formatCurrency(h.totalAmountInr)
+            )
+        )
+
+        Surface(
+            color = SecondaryLightBlue,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, tint = SecondaryBlue)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Saved offline as ${h.billNumber}.pdf in ${h.publicPdfDisplayPath.ifBlank { "${BillPdfGenerator.PUBLIC_FOLDER_DISPLAY}/${h.billNumber}.pdf" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryBlue
+                )
+            }
+        }
+
+        FieldActionButton(
+            text = strings.printReceipt3Copies,
+            icon = Icons.Filled.Print,
+            color = SecondaryBlue,
+            testTag = "bill_success_print3_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onPrint3Copies
+        )
+        FieldActionButton(
+            text = strings.reprintReceipt,
+            icon = Icons.Filled.Refresh,
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            testTag = "bill_success_reprint_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onReprint
+        )
+        FieldActionButton(
+            text = strings.receiptPreview,
+            icon = Icons.Filled.Visibility,
+            color = BhoomgaadiGreen,
+            testTag = "bill_success_preview_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onPreviewReceipt
+        )
+        FieldActionButton(
+            text = strings.createNewBill,
+            icon = Icons.Filled.NoteAdd,
+            color = ProcurementAmber,
+            testTag = "bill_success_new_bill_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onCreateNewBill
+        )
+        FieldActionButton(
+            text = strings.backToHome,
+            icon = Icons.Filled.Home,
+            color = SlateTileBg,
+            contentColor = TextPrimary,
+            testTag = "bill_success_home_btn",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onBackToHome
+        )
     }
 }

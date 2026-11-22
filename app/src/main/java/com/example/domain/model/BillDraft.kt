@@ -9,6 +9,7 @@ data class BillDraftLineItem(
     val id: String,
     val product: ProductEntity,
     val bagCount: Int,
+    val weightPerBagKg: Double,
     val grossWeightKg: Double,
     val tareWeightKg: Double,
     val netQuantityKg: Double,
@@ -19,14 +20,23 @@ data class BillDraftLineItem(
 )
 
 data class BillDraft(
+    val editingBillUuid: String? = null,
+    val editingBillNumber: String? = null,
+    val procurementDateMillis: Long = System.currentTimeMillis(),
     val selectedFarmer: FarmerEntity? = null,
     val selectedLocation: LocationEntity? = null,
     val selectedGodown: GodownEntity? = null,
     val lines: List<BillDraftLineItem> = emptyList(),
+    val membershipEnrolled: Boolean = false,
+    val membershipFeeInr: Double = 0.0,
     val remarks: String = "",
-    val weighingSlipRef: String = ""
+    val weighingSlipRef: String = "",
+    val editReason: String = ""
 ) {
+    val isEditMode: Boolean get() = !editingBillUuid.isNullOrBlank()
     val totalBags: Int get() = lines.sumOf { it.bagCount }
     val totalQuantityKg: Double get() = lines.sumOf { it.netQuantityKg }
-    val grandTotalAmount: Double get() = lines.sumOf { it.lineAmount }
+    val procurementAmountInr: Double get() = lines.sumOf { it.lineAmount }
+    val appliedMembershipAmount: Double get() = if (membershipEnrolled) membershipFeeInr else 0.0
+    val grandTotalAmount: Double get() = procurementAmountInr + appliedMembershipAmount
 }

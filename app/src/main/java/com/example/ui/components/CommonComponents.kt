@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.domain.model.AppLanguage
 import com.example.ui.theme.*
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -99,6 +101,34 @@ fun BhoomgaadiScaffold(
 }
 
 @Composable
+fun LanguageToggleChip(
+    currentLanguage: AppLanguage,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextButton(
+        onClick = onToggle,
+        colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .testTag("language_toggle_button")
+    ) {
+        Surface(
+            color = Color(0x33FFFFFF),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text(
+                text = if (currentLanguage == AppLanguage.ENGLISH) "EN / हिं" else "हिं / EN",
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
 fun SectionCard(
     title: String? = null,
     modifier: Modifier = Modifier,
@@ -108,17 +138,17 @@ fun SectionCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = containerColor),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             if (title != null || trailing != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp),
+                        .padding(bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -139,10 +169,52 @@ fun SectionCard(
 }
 
 @Composable
+fun KeyValueTable(
+    rows: List<Pair<String, String>>,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, BorderGray, RoundedCornerShape(10.dp))
+            .background(CardWhite)
+    ) {
+        rows.forEachIndexed { idx, (label, value) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(if (idx % 2 == 0) CardWhite else BhoomgaadiMintTint)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    modifier = Modifier.weight(0.44f)
+                )
+                Text(
+                    text = value.ifBlank { "-" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    modifier = Modifier.weight(0.56f)
+                )
+            }
+            if (idx < rows.lastIndex) {
+                HorizontalDivider(color = BorderGray.copy(alpha = 0.55f))
+            }
+        }
+    }
+}
+
+@Composable
 fun FieldActionButton(
     text: String,
     icon: ImageVector? = null,
     color: Color = MaterialTheme.colorScheme.primary,
+    contentColor: Color = Color.White,
     enabled: Boolean = true,
     testTag: String = "",
     modifier: Modifier = Modifier,
@@ -152,11 +224,11 @@ fun FieldActionButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = taggedModifier.heightIn(min = 52.dp),
-        shape = RoundedCornerShape(14.dp),
+        modifier = taggedModifier.heightIn(min = 50.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = color,
-            contentColor = Color.White
+            contentColor = contentColor
         )
     ) {
         if (icon != null) {
@@ -218,7 +290,7 @@ fun InfoRow(
             text = value.ifBlank { "-" },
             style = MaterialTheme.typography.bodyLarge.copy(
                 fontWeight = if (boldValue) FontWeight.Bold else FontWeight.Medium,
-                fontFamily = if (monoValue) JetBrainsMono else PlusJakartaSans
+                fontFamily = if (monoValue) JetBrainsMono else MaterialTheme.typography.bodyLarge.fontFamily
             ),
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(0.58f)
@@ -252,7 +324,11 @@ fun <T> SimpleDropdown(
             enabled = enabled,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = CardWhite,
+                unfocusedContainerColor = CardWhite
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled)
@@ -285,20 +361,20 @@ fun EmptyStateCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(28.dp),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .size(58.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(BhoomgaadiLightGreen),
                 contentAlignment = Alignment.Center
             ) {
@@ -306,28 +382,16 @@ fun EmptyStateCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = BhoomgaadiDarkGreen,
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(30.dp)
                 )
             }
-            Spacer(Modifier.height(14.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Spacer(Modifier.height(12.dp))
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(text = description, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
             if (actionLabel != null && onAction != null) {
-                Spacer(Modifier.height(16.dp))
-                FieldActionButton(
-                    text = actionLabel,
-                    onClick = onAction,
-                    testTag = "empty_state_action"
-                )
+                Spacer(Modifier.height(14.dp))
+                FieldActionButton(text = actionLabel, onClick = onAction, testTag = "empty_state_action")
             }
         }
     }
@@ -338,13 +402,25 @@ fun formatCurrency(amount: Double): String {
     return formatter.format(amount)
 }
 
+fun formatCurrencyWhole(amount: Double): String {
+    val formatter = NumberFormat.getCurrencyInstance(Locale("en", "IN")).apply {
+        maximumFractionDigits = 0
+    }
+    return formatter.format(amount)
+}
+
 fun formatQty(qty: Double): String = String.format(Locale.US, "%.2f", qty)
 
 fun formatDateTime(millis: Long): String =
-    SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(millis))
+    SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date(millis))
 
 fun formatShortDate(millis: Long): String =
-    SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(millis))
+    SimpleDateFormat("dd-MM-yyyy", Locale.US).format(Date(millis))
+
+fun formatAadhaarSpaced(aadhaar: String): String {
+    val digits = aadhaar.filter { it.isDigit() }
+    return digits.chunked(4).joinToString(" ")
+}
 
 fun maskAadhaar(aadhaar: String): String {
     val digits = aadhaar.filter { it.isDigit() }

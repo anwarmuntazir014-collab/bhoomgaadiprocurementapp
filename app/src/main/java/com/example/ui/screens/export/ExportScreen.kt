@@ -2,37 +2,48 @@ package com.example.ui.screens.export
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.AppPreferences
+import com.example.data.local.entities.UserEntity
+import com.example.data.repository.ProcurementRepository
+import com.example.domain.model.UserRole
 import com.example.export.CsvExportManager
 import com.example.export.DatabaseBackupManager
+import com.example.export.FarmerImportSummary
 import com.example.pdf.PdfPrintShareHelper
 import com.example.sync.DriveUploadWorker
 import com.example.ui.components.*
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.screens.dashboard.DashboardViewModel
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @Composable
 fun ExportScreen(
+    currentUser: UserEntity,
     prefs: AppPreferences,
+    repository: ProcurementRepository,
     csvExportManager: CsvExportManager,
     backupManager: DatabaseBackupManager,
     dashboardViewModel: DashboardViewModel,
@@ -41,12 +52,39 @@ fun ExportScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val strings = LocalAppStrings.current
     val summary by dashboardViewModel.summary.collectAsStateWithLifecycle()
 
     var isBusy by remember { mutableStateOf(false) }
-    var lastStatusMessage by remember { mutableStateOf<String?>(null) }
+    var lastImportSummary by remember { mutableStateOf<FarmerImportSummary?>(null) }
+    var showRestoreWarning by remember { mutableStateOf(false) }
 
-    val saveBackupLauncher = rememberLauncherForActivityResult(
+    // Direct .xlsx / .csv Farmer Master Data Importer (Admin only)
+    val importExcelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isBusy = true
+                val res = repository.importFarmersFromExcel(currentUser, uri)
+                isBusy = false
+                res.fold(
+                    onSuccess = { importRes ->
+                        lastImportSummary = importRes
+                        snackbarHostState.showSnackbar(
+                            "Imported: ${importRes.addedCount} added, ${importRes.updatedCount} updated."
+                        )
+                    },
+                    onFailure = { err ->
+                        snackbarHostState.showSnackbar(err.message ?: "Excel import failed.")
+                    }
+                )
+            }
+        }
+    }
+
+    // Export SQLite .db Backup via SAF
+    val createBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         if (uri != null) {
@@ -54,16 +92,15 @@ fun ExportScreen(
                 isBusy = true
                 val res = backupManager.exportBackupToUri(uri)
                 isBusy = false
-                val msg = res.fold(
-                    onSuccess = { "SQLite backup saved successfully." },
-                    onFailure = { it.message ?: "Backup export failed." }
+                res.fold(
+                    onSuccess = { snackbarHostState.showSnackbar("SQLite backup saved successfully.") },
+                    onFailure = { snackbarHostState.showSnackbar(it.message ?: "Backup failed.") }
                 )
-                lastStatusMessage = msg
-                snackbarHostState.showSnackbar(msg)
             }
         }
     }
 
+    // Restore SQLite .db Backup via SAF
     val restoreBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -72,19 +109,19 @@ fun ExportScreen(
                 isBusy = true
                 val res = backupManager.restoreFromUri(uri)
                 isBusy = false
-                val msg = res.fold(
-                    onSuccess = { "Database restored successfully. Records refreshed." },
-                    onFailure = { it.message ?: "Restore failed." }
+                res.fold(
+                    onSuccess = {
+                        snackbarHostState.showSnackbar("Database restored! Restart the app if needed to refresh all screens.")
+                    },
+                    onFailure = { snackbarHostState.showSnackbar(it.message ?: "Restore failed.") }
                 )
-                lastStatusMessage = msg
-                snackbarHostState.showSnackbar(msg)
             }
         }
     }
 
     BhoomgaadiScaffold(
-        title = "Export, Backup & Sync",
-        subtitle = "CSV Ledgers • SQLite .db • Drive Queue",
+        title = strings.exportData,
+        subtitle = "Excel Import, Reports & Offline Backup",
         onBack = onBack,
         snackbarHostState = snackbarHostState
     ) { padding ->
@@ -97,215 +134,316 @@ fun ExportScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 720.dp)
+                    .widthIn(max = 600.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (isBusy) {
                     LinearProgressIndicator(
-                        color = BhoomgaadiGreen,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        color = BhoomgaadiDarkGreen
                     )
                 }
 
-                if (lastStatusMessage != null) {
-                    Surface(
-                        color = BhoomgaadiLightGreen,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
+                // 1. Direct .xlsx / .csv Farmer Master Import (Admin Only)
+                if (currentUser.role == UserRole.ADMIN) {
+                    SectionCard(
+                        title = "Master Data Import (Admin)",
+                        containerColor = BhoomgaadiLightGreen
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Info, contentDescription = null, tint = BhoomgaadiDarkGreen)
-                            Spacer(Modifier.width(8.dp))
-                            Text(lastStatusMessage.orEmpty(), color = BhoomgaadiDarkGreen)
-                        }
-                    }
-                }
-
-                // CSV Exports
-                SectionCard(title = "1. Excel / Tally CSV Exports") {
-                    Text(
-                        "Export offline SQLite registers as standard UTF-8 CSV files ready for Excel, Google Sheets, or bank NEFT disbursement.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    FieldActionButton(
-                        text = "Export Farmers Master CSV",
-                        icon = Icons.Filled.Groups,
-                        enabled = !isBusy,
-                        testTag = "export_farmers_csv_btn",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            scope.launch {
-                                isBusy = true
-                                runCatching { csvExportManager.exportFarmersCsv() }.fold(
-                                    onSuccess = { file ->
-                                        isBusy = false
-                                        lastStatusMessage = "Generated ${file.name}"
-                                        PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Farmers CSV")
-                                    },
-                                    onFailure = { err ->
-                                        isBusy = false
-                                        snackbarHostState.showSnackbar(err.message ?: "Export failed")
-                                    }
-                                )
-                            }
-                        }
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    FieldActionButton(
-                        text = "Export Bills Summary CSV (Bank Payout)",
-                        icon = Icons.Filled.AccountBalance,
-                        color = SecondaryBlue,
-                        enabled = !isBusy,
-                        testTag = "export_bills_csv_btn",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            scope.launch {
-                                isBusy = true
-                                runCatching { csvExportManager.exportBillsSummaryCsv() }.fold(
-                                    onSuccess = { file ->
-                                        isBusy = false
-                                        lastStatusMessage = "Generated ${file.name}"
-                                        PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Bills Summary CSV")
-                                    },
-                                    onFailure = { err ->
-                                        isBusy = false
-                                        snackbarHostState.showSnackbar(err.message ?: "Export failed")
-                                    }
-                                )
-                            }
-                        }
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    FieldActionButton(
-                        text = "Export Produce Line-Items Ledger CSV",
-                        icon = Icons.Filled.TableChart,
-                        color = ProcurementAmber,
-                        enabled = !isBusy,
-                        testTag = "export_ledger_csv_btn",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            scope.launch {
-                                isBusy = true
-                                runCatching { csvExportManager.exportLineItemsLedgerCsv() }.fold(
-                                    onSuccess = { file ->
-                                        isBusy = false
-                                        lastStatusMessage = "Generated ${file.name}"
-                                        PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Ledger CSV")
-                                    },
-                                    onFailure = { err ->
-                                        isBusy = false
-                                        snackbarHostState.showSnackbar(err.message ?: "Export failed")
-                                    }
-                                )
-                            }
-                        }
-                    )
-                }
-
-                // SQLite Database Backup & Restore
-                SectionCard(title = "2. Full SQLite Database Backup & Restore") {
-                    Text(
-                        "Flushes WAL journal into a single portable .db snapshot containing all farmers, bills, rates, and audit logs.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
+                        Text(
+                            text = "Load your existing Farmers Excel (.xlsx) or CSV sheet (Member & Non-Member). Automatically upserts by Aadhaar and builds Block → Cluster → Village dropdown lists.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                        Spacer(Modifier.height(10.dp))
                         FieldActionButton(
-                            text = "Save .db File",
-                            icon = Icons.Filled.Save,
+                            text = strings.importExcelMaster,
+                            icon = Icons.Filled.FileUpload,
+                            color = BhoomgaadiDarkGreen,
                             enabled = !isBusy,
-                            testTag = "export_save_db_btn",
-                            modifier = Modifier.weight(1f),
+                            testTag = "export_import_excel_btn",
+                            modifier = Modifier.fillMaxWidth(),
                             onClick = {
-                                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-                                saveBackupLauncher.launch("Bhoomgaadi_${prefs.deviceCode}_$stamp.db")
+                                importExcelLauncher.launch(
+                                    arrayOf(
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "text/csv",
+                                        "text/comma-separated-values",
+                                        "application/octet-stream",
+                                        "*/*"
+                                    )
+                                )
                             }
                         )
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    isBusy = true
-                                    val res = backupManager.createLocalBackupFile()
-                                    isBusy = false
-                                    res.fold(
-                                        onSuccess = { file ->
-                                            lastStatusMessage = "Backup created: ${file.name}"
-                                            PdfPrintShareHelper.shareFile(
-                                                context,
-                                                file,
-                                                "application/octet-stream",
-                                                "Share SQLite Backup"
-                                            )
-                                        },
-                                        onFailure = { snackbarHostState.showSnackbar(it.message ?: "Backup failed") }
-                                    )
-                                }
-                            },
-                            enabled = !isBusy,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 52.dp)
-                                .testTag("export_share_db_btn")
-                        ) {
-                            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Share .db")
+
+                        lastImportSummary?.let { s ->
+                            Spacer(Modifier.height(10.dp))
+                            KeyValueTable(
+                                rows = listOf(
+                                    "Total Rows Read" to s.totalRowsRead.toString(),
+                                    "New Farmers Added" to s.addedCount.toString(),
+                                    "Existing Updated" to s.updatedCount.toString(),
+                                    "Skipped (Invalid Aadhaar)" to s.skippedCount.toString(),
+                                    "New Blocks / Clusters / Villages" to "${s.blocksAdded} / ${s.clustersAdded} / ${s.villagesAdded}"
+                                )
+                            )
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(
-                        onClick = { restoreBackupLauncher.launch(arrayOf("*/*")) },
-                        enabled = !isBusy,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("export_restore_db_btn")
+                } else {
+                    Surface(
+                        color = SlateTileBg,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Restore from SQLite .db Backup", fontWeight = FontWeight.SemiBold)
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Lock, contentDescription = null, tint = TextSecondary)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Excel Farmer Master Import is restricted to Admin accounts.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
                     }
                 }
 
-                // Background Google Drive PDF Sync
-                SectionCard(title = "3. Google Drive Background PDF Sync") {
-                    InfoRow("Pending PDFs in Queue", "${summary.pendingUploads}", boldValue = true, monoValue = true)
-                    InfoRow("Drive Folder ID", prefs.driveRootFolderId.ifBlank { "Not configured (Settings)" })
-                    InfoRow("OAuth Token", if (prefs.driveAccessToken.isBlank()) "Not configured" else "Configured")
-                    Spacer(Modifier.height(10.dp))
-                    FieldActionButton(
-                        text = "Queue Background Drive Upload",
-                        icon = Icons.Filled.CloudUpload,
-                        color = SecondaryBlue,
-                        testTag = "export_drive_sync_btn",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            if (prefs.driveAccessToken.isBlank()) {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Configure Google Drive Folder ID & Access Token in Settings first.")
+                // 2. Layout 3 Export Cards
+                ExportActionTile(
+                    icon = Icons.Filled.Receipt,
+                    iconBg = SecondaryLightBlue,
+                    iconTint = SecondaryBlue,
+                    title = "Export Bills (CSV)",
+                    subtitle = "Export all finalized & cancelled procurement bills",
+                    testTag = "export_bills_csv_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            runCatching { csvExportManager.exportBillsSummaryCsv() }
+                                .onSuccess { file ->
+                                    PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Bills CSV")
                                 }
-                            } else {
-                                DriveUploadWorker.enqueue(context)
-                                lastStatusMessage = "WorkManager Drive upload scheduled (runs automatically when online)."
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Drive PDF sync queued via WorkManager.")
+                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Export failed") }
+                            isBusy = false
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.People,
+                    iconBg = SecondaryLightBlue,
+                    iconTint = SecondaryBlue,
+                    title = "Export Farmers (CSV)",
+                    subtitle = "Export full farmer master data with Block/Cluster/Village & Bank details",
+                    testTag = "export_farmers_csv_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            runCatching { csvExportManager.exportFarmersCsv() }
+                                .onSuccess { file ->
+                                    PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Farmers CSV")
                                 }
+                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Export failed") }
+                            isBusy = false
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.Inventory2,
+                    iconBg = SecondaryLightBlue,
+                    iconTint = SecondaryBlue,
+                    title = "Export Items (CSV)",
+                    subtitle = "Export item-wise procurement ledger (bags, weight, moisture, rates)",
+                    testTag = "export_items_csv_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            runCatching { csvExportManager.exportLineItemsLedgerCsv() }
+                                .onSuccess { file ->
+                                    PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Items CSV")
+                                }
+                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Export failed") }
+                            isBusy = false
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.CardMembership,
+                    iconBg = DashboardLightPurple,
+                    iconTint = DashboardPurple,
+                    title = "Export Membership (CSV)",
+                    subtitle = "Export Member farmers & new ₹${prefs.membershipFeeInr.toInt()} enrollments",
+                    testTag = "export_membership_csv_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            runCatching { csvExportManager.exportMembershipCsv() }
+                                .onSuccess { file ->
+                                    PdfPrintShareHelper.shareFile(context, file, "text/csv", "Share Membership CSV")
+                                }
+                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Export failed") }
+                            isBusy = false
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.TableChart,
+                    iconBg = BhoomgaadiLightGreen,
+                    iconTint = BhoomgaadiDarkGreen,
+                    title = "Export to Excel (Single File .xlsx)",
+                    subtitle = "All 4 tabs (Bills, Farmers, Items, Membership) in one Excel workbook",
+                    testTag = "export_all_excel_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            runCatching { csvExportManager.exportAllInOneExcelXlsx() }
+                                .onSuccess { file ->
+                                    PdfPrintShareHelper.shareFile(
+                                        context,
+                                        file,
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "Share Bhoomgaadi Excel Workbook"
+                                    )
+                                }
+                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Excel export failed") }
+                            isBusy = false
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.CloudUpload,
+                    iconBg = ProcurementLightOrange,
+                    iconTint = ProcurementOrange,
+                    title = "Upload Pending PDFs to Drive",
+                    subtitle = "${summary.pendingUploads} locally saved bill PDFs awaiting Google Drive sync",
+                    testTag = "export_drive_upload_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        if (prefs.driveAccessToken.isBlank()) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Configure Google Drive Folder & Token in Settings first.")
+                            }
+                        } else {
+                            DriveUploadWorker.enqueue(context)
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Google Drive PDF sync queued in background.")
                             }
                         }
+                    }
+                )
+
+                // Offline SQLite Full Database Backup & Restore
+                SectionCard(title = "Offline SQLite Database Backup & Restore") {
+                    Text(
+                        text = "Save a complete copy of your offline SQLite database (.db) to device storage or restore from a previous backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
                     )
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        FieldActionButton(
+                            text = "Save .db Backup",
+                            icon = Icons.Filled.SaveAlt,
+                            color = BhoomgaadiDarkGreen,
+                            enabled = !isBusy,
+                            testTag = "export_db_backup_btn",
+                            modifier = Modifier.weight(1f),
+                            onClick = { createBackupLauncher.launch("Bhoomgaadi_Backup.db") }
+                        )
+                        if (currentUser.role == UserRole.ADMIN) {
+                            FieldActionButton(
+                                text = "Restore .db",
+                                icon = Icons.Filled.Restore,
+                                color = DangerLightRed,
+                                contentColor = DangerRed,
+                                enabled = !isBusy,
+                                testTag = "export_db_restore_btn",
+                                modifier = Modifier.weight(1f),
+                                onClick = { showRestoreWarning = true }
+                            )
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    if (showRestoreWarning) {
+        AlertDialog(
+            onDismissRequest = { showRestoreWarning = false },
+            title = { Text("Restore SQLite Backup?", color = DangerRed, fontWeight = FontWeight.Bold) },
+            text = {
+                Text("Restoring a backup replaces all current local farmers, bills, and user accounts with the selected .db file. Continue?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRestoreWarning = false
+                        restoreBackupLauncher.launch(arrayOf("*/*"))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DangerRed)
+                ) {
+                    Text("Select Backup File", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreWarning = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ExportActionTile(
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    testTag: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardWhite),
+        border = BorderStroke(1.dp, BorderGray.copy(alpha = 0.8f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary)
         }
     }
 }

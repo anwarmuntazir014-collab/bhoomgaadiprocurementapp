@@ -5,6 +5,13 @@ import com.example.domain.model.*
 
 class Converters {
     @TypeConverter
+    fun fromUserRole(value: UserRole): String = value.name
+
+    @TypeConverter
+    fun toUserRole(value: String): UserRole =
+        runCatching { UserRole.valueOf(value) }.getOrDefault(UserRole.OFFICER)
+
+    @TypeConverter
     fun fromMembershipStatus(value: MembershipStatus): String = value.name
 
     @TypeConverter

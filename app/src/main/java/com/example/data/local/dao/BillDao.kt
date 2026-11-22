@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import com.example.data.local.entities.BillHeaderEntity
 import com.example.data.local.entities.BillItemEntity
 import com.example.data.local.entities.BillWithItems
@@ -41,12 +42,25 @@ interface BillDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertHeader(header: BillHeaderEntity)
 
+    @Update
+    suspend fun updateHeader(header: BillHeaderEntity)
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertItems(items: List<BillItemEntity>)
+
+    @Query("DELETE FROM BillItems WHERE billUuid = :billUuid")
+    suspend fun deleteItemsForBill(billUuid: String)
 
     @Transaction
     suspend fun insertBillAtomic(header: BillHeaderEntity, items: List<BillItemEntity>) {
         insertHeader(header)
+        insertItems(items)
+    }
+
+    @Transaction
+    suspend fun updateBillAtomic(header: BillHeaderEntity, items: List<BillItemEntity>) {
+        updateHeader(header)
+        deleteItemsForBill(header.billUuid)
         insertItems(items)
     }
 
@@ -69,8 +83,21 @@ interface BillDao {
         cancelledAt: Long
     )
 
-    @Query("UPDATE BillHeaders SET pdfFilePath = :pdfPath, updatedAt = :updatedAt WHERE billUuid = :billUuid")
-    suspend fun updatePdfPath(billUuid: String, pdfPath: String, updatedAt: Long)
+    @Query(
+        """
+        UPDATE BillHeaders
+        SET pdfFilePath = :pdfPath,
+            publicPdfDisplayPath = :publicPath,
+            updatedAt = :updatedAt
+        WHERE billUuid = :billUuid
+        """
+    )
+    suspend fun updatePdfPaths(
+        billUuid: String,
+        pdfPath: String,
+        publicPath: String,
+        updatedAt: Long
+    )
 
     @Query(
         """

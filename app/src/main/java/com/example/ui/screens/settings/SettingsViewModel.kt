@@ -3,9 +3,7 @@ package com.example.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.local.entities.GodownEntity
-import com.example.data.local.entities.LocationEntity
-import com.example.data.local.entities.ProductEntity
+import com.example.data.local.entities.*
 import com.example.data.repository.ProcurementRepository
 import com.example.domain.model.RecordStatus
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,21 +23,30 @@ class SettingsViewModel(private val repository: ProcurementRepository) : ViewMod
     val godowns: StateFlow<List<GodownEntity>> = repository.observeAllGodowns()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val blocks: StateFlow<List<BlockEntity>> = repository.observeAllBlocks()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val clusters: StateFlow<List<ClusterEntity>> = repository.observeAllClusters()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val villages: StateFlow<List<VillageEntity>> = repository.observeAllVillages()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val prefs get() = repository.prefs
 
     fun saveCenterSettings(
         deviceCode: String,
         procurementYear: Int,
-        operatorName: String,
         authorizedSignatory: String,
+        membershipFeeInr: Double,
         driveFolderId: String,
         driveAccessToken: String,
         autoQueueDrive: Boolean
     ) {
         prefs.deviceCode = deviceCode
         prefs.procurementYear = procurementYear
-        prefs.operatorName = operatorName
         prefs.authorizedSignatory = authorizedSignatory
+        prefs.membershipFeeInr = membershipFeeInr
         prefs.driveRootFolderId = driveFolderId
         prefs.driveAccessToken = driveAccessToken
         prefs.autoQueueDriveUpload = autoQueueDrive
@@ -110,6 +117,21 @@ class SettingsViewModel(private val repository: ProcurementRepository) : ViewMod
                 )
             )
         }
+    }
+
+    fun addBlock(name: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch { repository.addBlock(name) }
+    }
+
+    fun addCluster(blockId: String, name: String) {
+        if (blockId.isBlank() || name.isBlank()) return
+        viewModelScope.launch { repository.addCluster(blockId, name) }
+    }
+
+    fun addVillage(clusterId: String, name: String) {
+        if (clusterId.isBlank() || name.isBlank()) return
+        viewModelScope.launch { repository.addVillage(clusterId, name) }
     }
 
     class Factory(private val repository: ProcurementRepository) : ViewModelProvider.Factory {

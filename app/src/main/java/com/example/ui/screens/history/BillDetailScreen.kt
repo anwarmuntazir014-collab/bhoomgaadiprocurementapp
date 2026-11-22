@@ -1,6 +1,7 @@
 package com.example.ui.screens.history
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,17 +12,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.domain.model.BankAccountType
+import com.example.data.local.entities.UserEntity
 import com.example.domain.model.BillStatus
 import com.example.domain.model.CancellationReason
+import com.example.domain.model.DriveUploadStatus
+import com.example.domain.model.UserRole
+import com.example.pdf.BillPdfGenerator
 import com.example.pdf.PdfPrintShareHelper
+import com.example.sync.DriveUploadWorker
 import com.example.ui.components.*
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -29,18 +36,24 @@ import java.io.File
 @Composable
 fun BillDetailScreen(
     billUuid: String,
+    currentUser: UserEntity,
     viewModel: HistoryViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onEditBill: (billUuid: String) -> Unit,
+    onOpenReceiptPreview: (billUuid: String) -> Unit
 ) {
     val bill by viewModel.observeBill(billUuid).collectAsStateWithLifecycle(initialValue = null)
     val auditLogs by viewModel.observeBillAuditLogs(billUuid).collectAsStateWithLifecycle(initialValue = emptyList())
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val strings = LocalAppStrings.current
 
-    var showVoidDialog by remember { mutableStateOf(false) }
+    var showCancelDialog by remember { mutableStateOf(false) }
+    var selectedCancelReason by remember { mutableStateOf(CancellationReason.INCORRECT_WEIGHT) }
+    var cancelNotes by remember { mutableStateOf("") }
 
-    fun ensurePdfAndRun(action: (File) -> Unit) {
+    fun ensurePdf(action: (File) -> Unit) {
         val current = bill ?: return
         val existing = File(current.header.pdfFilePath)
         if (current.header.pdfFilePath.isNotBlank() && existing.exists()) {
@@ -50,7 +63,7 @@ fun BillDetailScreen(
                 res.fold(
                     onSuccess = { path -> action(File(path)) },
                     onFailure = { err ->
-                        scope.launch { snackbarHostState.showSnackbar(err.message ?: "PDF generation failed") }
+                        scope.launch { snackbarHostState.showSnackbar(err.message ?: "Unable to generate PDF") }
                     }
                 )
             }
@@ -58,26 +71,23 @@ fun BillDetailScreen(
     }
 
     BhoomgaadiScaffold(
-        title = bill?.header?.billNumber ?: "Bill Detail",
-        subtitle = bill?.header?.billStatus?.label,
+        title = "Bill Details",
+        subtitle = bill?.header?.billNumber,
         onBack = onBack,
         snackbarHostState = snackbarHostState
     ) { padding ->
-        val currentBill = bill
-        if (currentBill == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = BhoomgaadiGreen)
+        val current = bill
+        if (current == null) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = BhoomgaadiDarkGreen)
             }
             return@BhoomgaadiScaffold
         }
 
-        val h = currentBill.header
-        val isVoid = h.billStatus == BillStatus.CANCELLED
+        val h = current.header
+        val isCancelled = h.billStatus == BillStatus.CANCELLED
+        val canEdit = viewModel.canEditBill(h, currentUser)
+        val procAmt = if (h.procurementAmountInr > 0.0) h.procurementAmountInr else (h.totalAmountInr - h.membershipAmountInr)
 
         Box(
             modifier = Modifier
@@ -88,208 +98,192 @@ fun BillDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 720.dp)
+                    .widthIn(max = 600.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Header Status Card
-                SectionCard(
-                    containerColor = if (isVoid) DangerLightRed else BhoomgaadiLightGreen
+                // Header Status Card (Layout 3 Screen 4)
+                Surface(
+                    color = if (isCancelled) DangerLightRed else BhoomgaadiLightGreen,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, if (isCancelled) DangerRed.copy(alpha = 0.5f) else BhoomgaadiGreen.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = h.billNumber,
-                                fontFamily = JetBrainsMono,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isVoid) DangerRed else BhoomgaadiDarkGreen
-                            )
-                            Text(
-                                text = formatDateTime(h.billDateMillis),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        StatusPill(
-                            text = if (isVoid) "VOID / CANCELLED" else "CONFIRMED",
-                            bgColor = if (isVoid) DangerRed else BhoomgaadiDarkGreen,
-                            fgColor = CardWhite
-                        )
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column {
-                            Text("Net Weight", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "${formatQty(h.totalQuantityKg)} kg (${h.totalBags} bags)",
+                                text = "Bill No. ${h.billNumber}",
                                 fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isCancelled) DangerRed else BhoomgaadiDarkGreen
                             )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Payable Amount", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
                             Text(
-                                formatCurrency(h.totalAmountInr),
-                                fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                color = if (isVoid) DangerRed else BhoomgaadiDarkGreen
+                                text = "Date: ${formatDateTime(h.billDateMillis)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
                             )
-                        }
-                    }
-
-                    if (isVoid) {
-                        Spacer(Modifier.height(10.dp))
-                        HorizontalDivider(color = DangerRed.copy(alpha = 0.3f))
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Cancellation Reason: ${h.cancellationReason?.label ?: "Unspecified"}",
-                            color = DangerRed,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (h.cancellationNotes.isNotBlank()) {
-                            Text("Notes: ${h.cancellationNotes}", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-
-                // PDF Print & Share Actions
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FieldActionButton(
-                        text = "Print Receipt",
-                        icon = Icons.Filled.Print,
-                        color = BhoomgaadiGreen,
-                        testTag = "bill_detail_print_button",
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            ensurePdfAndRun { file ->
-                                PdfPrintShareHelper.printPdf(context, file, "Bhoomgaadi_${h.billNumber}")
-                            }
-                        }
-                    )
-                    FieldActionButton(
-                        text = "Share PDF",
-                        icon = Icons.Filled.Share,
-                        color = SecondaryBlue,
-                        testTag = "bill_detail_share_button",
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            ensurePdfAndRun { file ->
-                                PdfPrintShareHelper.shareFile(
-                                    context,
-                                    file,
-                                    "application/pdf",
-                                    "Share Procurement Voucher ${h.billNumber}"
+                            if (h.revisionNumber > 0) {
+                                Text(
+                                    text = "Revision #${h.revisionNumber} by ${h.lastEditedBy} • Reason: ${h.lastEditReason}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SecondaryBlue
                                 )
                             }
                         }
-                    )
-                }
-
-                // Farmer & Bank Snapshot
-                SectionCard(title = "Farmer & Payment Snapshot") {
-                    InfoRow("Farmer Name", h.farmerNameSnapshot, boldValue = true)
-                    InfoRow("Aadhaar", maskAadhaar(h.farmerAadhaarSnapshot), monoValue = true)
-                    InfoRow("Village / Block", listOf(h.farmerVillageSnapshot, h.farmerBlockSnapshot).filter { it.isNotBlank() }.joinToString(", "))
-                    InfoRow("Membership", "${h.farmerMembershipSnapshot.label}${if (h.farmerMemberCodeSnapshot.isNotBlank()) " (${h.farmerMemberCodeSnapshot})" else ""}")
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = BorderGray.copy(alpha = 0.6f))
-                    InfoRow("Bank Account", h.bankAccountTypeSnapshot.label, boldValue = true)
-                    if (h.bankAccountTypeSnapshot != BankAccountType.NONE) {
-                        InfoRow("Account Holder", h.accountHolderSnapshot)
-                        InfoRow("Bank Name", h.bankNameSnapshot)
-                        InfoRow("Account No.", h.accountNumberSnapshot, monoValue = true)
-                        InfoRow("IFSC Code", h.ifscSnapshot, monoValue = true)
+                        StatusPill(
+                            text = h.billStatus.label,
+                            bgColor = if (isCancelled) DangerRed else BhoomgaadiDarkGreen,
+                            fgColor = Color.White
+                        )
                     }
                 }
 
-                // Center & Logistics
-                SectionCard(title = "Center & Storage") {
-                    InfoRow("Location", h.locationNameSnapshot, boldValue = true)
-                    InfoRow("Temporary Godown", h.godownNameSnapshot)
-                    if (h.weighingSlipRef.isNotBlank()) InfoRow("Weighing Slip Ref", h.weighingSlipRef, monoValue = true)
-                    if (h.remarks.isNotBlank()) InfoRow("Remarks", h.remarks)
-                    InfoRow("Operator", h.operatorName)
-                    InfoRow("Signatory", h.authorizedSignatory)
-                    InfoRow("Drive Sync", h.driveUploadStatus.label)
+                // Farmer Details
+                SectionCard(title = "Farmer Details") {
+                    KeyValueTable(
+                        rows = listOf(
+                            "Name" to h.farmerNameSnapshot,
+                            "Aadhaar" to formatAadhaarSpaced(h.farmerAadhaarSnapshot),
+                            "Village / Block" to "${h.farmerVillageSnapshot}, ${h.farmerBlockSnapshot}",
+                            "Membership" to if (h.membershipEnrolled) "Member (Enrolled ₹${h.membershipAmountInr.toInt()})" else h.farmerMembershipSnapshot.label,
+                            "Bank / Account" to if (h.accountNumberSnapshot.isNotBlank()) "${h.bankNameSnapshot} • ${h.accountNumberSnapshot}" else "No Bank Account"
+                        )
+                    )
                 }
 
-                // Line Items
-                SectionCard(title = "Weighed Produce Items (${currentBill.items.size})") {
-                    currentBill.items.sortedBy { it.lineOrder }.forEachIndexed { index, item ->
+                // Procurement Details
+                SectionCard(title = "Procurement Details") {
+                    KeyValueTable(
+                        rows = listOf(
+                            "Location" to h.locationNameSnapshot,
+                            "Temporary Godown" to h.godownNameSnapshot,
+                            "Authorized Signatory" to h.authorizedSignatory,
+                            "Operator" to h.operatorName
+                        )
+                    )
+                }
+
+                // Produce Items & Totals
+                SectionCard(title = "Items (${current.items.size})") {
+                    current.items.sortedBy { it.lineOrder }.forEachIndexed { idx, item ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                Text("${idx + 1}. ${item.stockItemNameSnapshot}", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "${index + 1}. ${item.stockItemNameSnapshot}",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "${item.bagCount} bag(s) • Gross ${formatQty(item.grossWeightKg)} - Tare ${formatQty(item.tareWeightKg)} = Net ${formatQty(item.netQuantityKg)} kg",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    "${item.qualityGrade}${if (item.moisturePercent.isNotBlank()) " • Moisture ${item.moisturePercent}%" else ""} • ₹${formatQty(item.ratePerKg)}/kg",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = BhoomgaadiDarkGreen
+                                    "${item.bagCount} bags • ${formatQty(item.netQuantityKg)} kg @ ₹${formatQty(item.ratePerKg)}" +
+                                        if (item.moisturePercent.isNotBlank()) " • M:${item.moisturePercent}%" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
                                 )
                             }
+                            Text(formatCurrency(item.lineAmountInr), fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono)
+                        }
+                        if (idx < current.items.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = BhoomgaadiDarkGreen)
+                    Spacer(Modifier.height(6.dp))
+                    InfoRow("Total Bags", h.totalBags.toString(), boldValue = true)
+                    InfoRow("Total Weight (kg)", formatQty(h.totalQuantityKg), boldValue = true, monoValue = true)
+                    InfoRow("Procurement Amount (₹)", formatCurrency(procAmt), boldValue = true, monoValue = true)
+                    if (h.membershipAmountInr > 0.0) {
+                        InfoRow("Membership Amount (₹)", formatCurrency(h.membershipAmountInr), boldValue = true, monoValue = true)
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = BhoomgaadiLightGreen,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Total Payable (₹)", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
                             Text(
-                                formatCurrency(item.lineAmountInr),
+                                formatCurrency(h.totalAmountInr),
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.ExtraBold,
                                 fontFamily = JetBrainsMono,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                                color = BhoomgaadiDarkGreen
                             )
                         }
-                        if (index < currentBill.items.lastIndex) {
-                            HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
-                        }
                     }
                 }
 
-                // Void / Cancel Button (Immutable Ledger Pattern)
-                if (!isVoid) {
-                    OutlinedButton(
-                        onClick = { showVoidDialog = true },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DangerRed),
-                        border = BorderStroke(1.dp, DangerRed),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 50.dp)
-                            .testTag("bill_detail_void_button")
-                    ) {
-                        Icon(Icons.Filled.Cancel, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Cancel / Void This Bill", fontWeight = FontWeight.Bold)
-                    }
-                }
+                // Bill Actions matching Layout 3 Screen 5
+                SectionCard(title = "Bill Actions") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FieldActionButton(
+                            text = "View PDF / Receipt Preview",
+                            icon = Icons.Filled.PictureAsPdf,
+                            color = SecondaryBlue,
+                            testTag = "bill_detail_view_pdf_btn",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { onOpenReceiptPreview(h.billUuid) }
+                        )
+                        FieldActionButton(
+                            text = "Print / Reprint",
+                            icon = Icons.Filled.Print,
+                            color = BhoomgaadiDarkGreen,
+                            testTag = "bill_detail_print_btn",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { ensurePdf { PdfPrintShareHelper.printPdf(context, it, h.billNumber) } }
+                        )
+                        FieldActionButton(
+                            text = "Share PDF",
+                            icon = Icons.Filled.Share,
+                            color = SecondaryLightBlue,
+                            contentColor = SecondaryBlue,
+                            testTag = "bill_detail_share_btn",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { ensurePdf { PdfPrintShareHelper.shareFile(context, it, "application/pdf", "Share ${h.billNumber}.pdf") } }
+                        )
+                        FieldActionButton(
+                            text = "Save to Drive",
+                            icon = Icons.Filled.CloudUpload,
+                            color = SecondaryLightBlue,
+                            contentColor = SecondaryBlue,
+                            testTag = "bill_detail_drive_btn",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                DriveUploadWorker.enqueue(context)
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Queued ${h.billNumber}.pdf for Google Drive upload.")
+                                }
+                            }
+                        )
 
-                // Audit Trail
-                if (auditLogs.isNotEmpty()) {
-                    SectionCard(title = "Immutable Audit Log") {
-                        auditLogs.forEach { log ->
-                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                Text(log.actionType.label, fontWeight = FontWeight.SemiBold, color = BhoomgaadiDarkGreen)
-                                Text(log.summary, style = MaterialTheme.typography.bodyMedium)
+                        // Role-aware Audited Bill Edit button
+                        if (!isCancelled) {
+                            FieldActionButton(
+                                text = strings.editBill,
+                                icon = Icons.Filled.Edit,
+                                color = ProcurementAmber,
+                                enabled = canEdit,
+                                testTag = "bill_detail_edit_btn",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onEditBill(h.billUuid) }
+                            )
+                            if (!canEdit && currentUser.role == UserRole.OFFICER) {
                                 Text(
-                                    "${formatDateTime(log.timestampMillis)} • ${log.performedBy} (${log.deviceCode})",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    text = "Procurement Officers can only edit bills created today. Ask an Admin to revise older bills.",
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary
                                 )
                             }
@@ -297,36 +291,113 @@ fun BillDetailScreen(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                // Document Status Card (Layout 3 Screen 5)
+                SectionCard(title = "Document Status") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = BhoomgaadiGreen)
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text("PDF Generated Offline", fontWeight = FontWeight.Bold)
+                            Text(
+                                h.publicPdfDisplayPath.ifBlank { "${BillPdfGenerator.PUBLIC_FOLDER_DISPLAY}/${h.billNumber}.pdf" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val uploaded = h.driveUploadStatus == DriveUploadStatus.UPLOADED
+                        Icon(
+                            imageVector = if (uploaded) Icons.Filled.CloudDone else Icons.Filled.CloudQueue,
+                            contentDescription = null,
+                            tint = if (uploaded) BhoomgaadiGreen else ProcurementAmber
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text("Google Drive Sync: ${h.driveUploadStatus.label}", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (uploaded) "Drive File ID: ${h.driveFileId}" else "Stored safely offline on device; will sync when Drive is configured.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                }
+
+                // Cancel / Void Bill button (Layout 3 Screen 5 & 6)
+                if (!isCancelled) {
+                    FieldActionButton(
+                        text = strings.cancelVoidBill,
+                        icon = Icons.Filled.Block,
+                        color = DangerLightRed,
+                        contentColor = DangerRed,
+                        testTag = "bill_detail_cancel_btn",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showCancelDialog = true }
+                    )
+                } else {
+                    SectionCard(title = "Cancellation Details", containerColor = DangerLightRed) {
+                        InfoRow("Reason", h.cancellationReason?.label ?: "Cancelled", boldValue = true)
+                        if (h.cancellationNotes.isNotBlank()) {
+                            InfoRow("Notes", h.cancellationNotes)
+                        }
+                        h.cancelledAtMillis?.let { InfoRow("Cancelled At", formatDateTime(it)) }
+                    }
+                }
+
+                // Audit History Trail
+                if (auditLogs.isNotEmpty()) {
+                    SectionCard(title = "Audit History (${auditLogs.size})") {
+                        auditLogs.forEachIndexed { idx, log ->
+                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(log.actionType.label, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BhoomgaadiDarkGreen)
+                                Text(log.summary, style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "${log.performedBy} • ${formatDateTime(log.timestampMillis)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextSecondary
+                                )
+                            }
+                            if (idx < auditLogs.lastIndex) HorizontalDivider(color = BorderGray.copy(alpha = 0.5f))
+                        }
+                    }
+                }
             }
         }
     }
 
-    if (showVoidDialog) {
-        var selectedReason by remember { mutableStateOf(CancellationReason.INCORRECT_WEIGHT) }
-        var notes by remember { mutableStateOf("") }
+    // Cancel Bill Confirmation Dialog matching Layout 3 Screen 6
+    if (showCancelDialog) {
         AlertDialog(
-            onDismissRequest = { showVoidDialog = false },
-            title = { Text("Cancel / Void Voucher", color = DangerRed, fontWeight = FontWeight.Bold) },
+            onDismissRequest = { showCancelDialog = false },
+            title = { Text("Cancel / Void Bill", color = DangerRed, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "Voided bills stay permanently in the SQLite audit ledger and their PDF is re-stamped with a VOID watermark.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Surface(
+                        color = DangerLightRed,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "This will permanently mark the bill as Cancelled/Void and update the PDF. This action cannot be undone.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DangerRed,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
                     SimpleDropdown(
-                        label = "Cancellation Reason",
-                        selectedText = selectedReason.label,
+                        label = "Reason for Cancellation *",
+                        selectedText = selectedCancelReason.label,
                         items = CancellationReason.entries,
                         itemLabel = { it.label },
-                        onSelected = { selectedReason = it }
+                        onSelected = { selectedCancelReason = it }
                     )
                     OutlinedTextField(
-                        value = notes,
-                        onValueChange = { notes = it },
-                        label = { Text("Audit Notes (Optional)") },
-                        maxLines = 3,
-                        shape = RoundedCornerShape(12.dp),
+                        value = cancelNotes,
+                        onValueChange = { cancelNotes = it },
+                        label = { Text("Additional Remarks (Optional)") },
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -334,23 +405,23 @@ fun BillDetailScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        showVoidDialog = false
-                        viewModel.cancelBill(billUuid, selectedReason, notes) { res ->
+                        viewModel.cancelBill(billUuid, selectedCancelReason, cancelNotes, currentUser) { res ->
+                            showCancelDialog = false
                             scope.launch {
                                 res.fold(
-                                    onSuccess = { snackbarHostState.showSnackbar("Bill voided and VOID PDF updated.") },
-                                    onFailure = { snackbarHostState.showSnackbar(it.message ?: "Failed to void bill.") }
+                                    onSuccess = { snackbarHostState.showSnackbar("Bill cancelled and PDF updated.") },
+                                    onFailure = { snackbarHostState.showSnackbar(it.message ?: "Cancellation failed.") }
                                 )
                             }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = DangerRed)
                 ) {
-                    Text("Confirm Void")
+                    Text("Cancel Bill", color = Color.White)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showVoidDialog = false }) { Text("Keep Bill") }
+                TextButton(onClick = { showCancelDialog = false }) { Text("Back") }
             }
         )
     }

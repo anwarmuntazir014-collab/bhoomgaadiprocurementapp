@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag (e.g. v1.0.0)"
+        description: "Release tag (e.g. v2.0.0)"
         required: false
-        default: "v1.0.0"
+        default: "v2.0.0"
 
 permissions:
   contents: write
@@ -67,21 +67,21 @@ jobs:
 
       - name: Prepare APK for release
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk Bhoomgaadi-Procurement-v1.0.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk Bhoomgaadi-Procurement-v2.0.0.apk
 
       - name: Upload APK workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: Bhoomgaadi-Procurement-APK
-          path: Bhoomgaadi-Procurement-v1.0.0.apk
+          path: Bhoomgaadi-Procurement-v2.0.0.apk
 
       - name: Publish APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v1.0.0' }}
-          name: "Bhoomgaadi Procurement ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v1.0.0' }}"
-          body: "Automated build of Bhoomgaadi Procurement offline-first Android APK."
-          files: Bhoomgaadi-Procurement-v1.0.0.apk
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v2.0.0' }}
+          name: "Bhoomgaadi Procurement ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v2.0.0' }}"
+          body: "Automated build of Bhoomgaadi Procurement v2.0 offline-first Android APK."
+          files: Bhoomgaadi-Procurement-v2.0.0.apk
           fail_on_unmatched_files: true
           make_latest: true
