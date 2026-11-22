@@ -39,16 +39,18 @@ class SettingsViewModel(private val repository: ProcurementRepository) : ViewMod
         procurementYear: Int,
         authorizedSignatory: String,
         membershipFeeInr: Double,
+        driveWebhookUrl: String,
+        driveSyncSecret: String,
         driveFolderId: String,
-        driveAccessToken: String,
         autoQueueDrive: Boolean
     ) {
         prefs.deviceCode = deviceCode
         prefs.procurementYear = procurementYear
         prefs.authorizedSignatory = authorizedSignatory
         prefs.membershipFeeInr = membershipFeeInr
+        prefs.driveWebhookUrl = driveWebhookUrl
+        prefs.driveSyncSecret = driveSyncSecret
         prefs.driveRootFolderId = driveFolderId
-        prefs.driveAccessToken = driveAccessToken
         prefs.autoQueueDriveUpload = autoQueueDrive
     }
 

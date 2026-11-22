@@ -32,12 +32,15 @@ import com.example.export.CsvExportManager
 import com.example.export.DatabaseBackupManager
 import com.example.export.FarmerImportSummary
 import com.example.pdf.PdfPrintShareHelper
+import com.example.sync.DriveService
 import com.example.sync.DriveUploadWorker
 import com.example.ui.components.*
 import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.screens.dashboard.DashboardViewModel
 import com.example.ui.theme.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ExportScreen(
@@ -390,14 +393,69 @@ fun ExportScreen(
                     testTag = "export_drive_upload_btn",
                     enabled = !isBusy,
                     onClick = {
-                        if (prefs.driveAccessToken.isBlank()) {
+                        if (!prefs.isDriveConfigured) {
                             scope.launch {
-                                snackbarHostState.showSnackbar("Configure Google Drive Folder & Token in Settings first.")
+                                snackbarHostState.showSnackbar("Configure Google Drive Web App URL & Secret Key in Settings first.")
                             }
                         } else {
                             DriveUploadWorker.enqueue(context)
                             scope.launch {
                                 snackbarHostState.showSnackbar("Google Drive PDF sync queued in background.")
+                            }
+                        }
+                    }
+                )
+
+                ExportActionTile(
+                    icon = Icons.Filled.Backup,
+                    iconBg = BhoomgaadiLightGreen,
+                    iconTint = BhoomgaadiDarkGreen,
+                    title = "1-Tap Backup Excel & DB to Drive",
+                    subtitle = "Upload complete 4-tab Excel (.xlsx) & SQLite backup (.db) directly to Drive",
+                    testTag = "export_drive_full_backup_btn",
+                    enabled = !isBusy,
+                    onClick = {
+                        if (!prefs.isDriveConfigured) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Configure Google Drive Web App URL & Secret Key in Settings first.")
+                            }
+                        } else {
+                            scope.launch {
+                                isBusy = true
+                                val uploadRes = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val drive = DriveService()
+                                        val folderPath = listOf("Backups", prefs.deviceCode, currentUser.username)
+                                        val xlsxFile = csvExportManager.exportAllInOneExcelXlsx()
+                                        drive.uploadFile(
+                                            webhookUrl = prefs.driveWebhookUrl,
+                                            secret = prefs.driveSyncSecret,
+                                            rootFolderId = prefs.driveRootFolderId,
+                                            file = xlsxFile,
+                                            mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            subFolders = folderPath
+                                        ).getOrThrow()
+
+                                        val dbFile = backupManager.createLocalBackupFile().getOrThrow()
+                                        drive.uploadFile(
+                                            webhookUrl = prefs.driveWebhookUrl,
+                                            secret = prefs.driveSyncSecret,
+                                            rootFolderId = prefs.driveRootFolderId,
+                                            file = dbFile,
+                                            mimeType = "application/octet-stream",
+                                            subFolders = folderPath
+                                        ).getOrThrow()
+                                    }
+                                }
+                                isBusy = false
+                                uploadRes.fold(
+                                    onSuccess = {
+                                        snackbarHostState.showSnackbar("Excel workbook & SQLite database backed up to Google Drive!")
+                                    },
+                                    onFailure = { err ->
+                                        snackbarHostState.showSnackbar(err.message ?: "Drive backup failed.")
+                                    }
+                                )
                             }
                         }
                     }

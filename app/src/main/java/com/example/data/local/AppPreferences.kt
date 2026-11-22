@@ -40,9 +40,16 @@ class AppPreferences(context: Context) {
         get() = prefs.getString("drive_root_folder_id", "") ?: ""
         set(value) = prefs.edit().putString("drive_root_folder_id", value.trim()).apply()
 
-    var driveAccessToken: String
-        get() = prefs.getString("drive_access_token", "") ?: ""
-        set(value) = prefs.edit().putString("drive_access_token", value.trim()).apply()
+    var driveWebhookUrl: String
+        get() = prefs.getString("drive_webhook_url", "") ?: ""
+        set(value) = prefs.edit().putString("drive_webhook_url", value.trim()).apply()
+
+    var driveSyncSecret: String
+        get() = prefs.getString("drive_sync_secret", "") ?: ""
+        set(value) = prefs.edit().putString("drive_sync_secret", value.trim()).apply()
+
+    val isDriveConfigured: Boolean
+        get() = driveWebhookUrl.isNotBlank() && driveSyncSecret.isNotBlank()
 
     var autoQueueDriveUpload: Boolean
         get() = prefs.getBoolean("auto_queue_drive", false)

@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.local.AppPreferences
 import com.example.data.local.entities.UserEntity
 import com.example.domain.model.BillStatus
 import com.example.domain.model.CancellationReason
@@ -262,9 +263,18 @@ fun BillDetailScreen(
                             testTag = "bill_detail_drive_btn",
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
-                                DriveUploadWorker.enqueue(context)
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Queued ${h.billNumber}.pdf for Google Drive upload.")
+                                val prefs = AppPreferences(context)
+                                if (!prefs.isDriveConfigured) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Google Drive Sync is not configured yet. Ask Admin to set it up in Settings.")
+                                    }
+                                } else {
+                                    ensurePdf {
+                                        DriveUploadWorker.enqueue(context)
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Queued ${h.billNumber}.pdf for Google Drive upload.")
+                                        }
+                                    }
                                 }
                             }
                         )

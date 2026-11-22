@@ -26,11 +26,14 @@ import com.example.domain.model.AppLanguage
 import com.example.domain.model.RecordStatus
 import com.example.domain.model.UserRole
 import com.example.pdf.BillPdfGenerator
+import com.example.sync.DriveService
 import com.example.ui.components.*
 import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.screens.auth.AuthViewModel
 import com.example.ui.theme.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,13 +136,17 @@ private fun GeneralSettingsTab(
     onMessage: (String) -> Unit
 ) {
     val prefs = viewModel.prefs
+    val scope = rememberCoroutineScope()
     var deviceCode by remember { mutableStateOf(prefs.deviceCode) }
     var seasonYear by remember { mutableStateOf(prefs.procurementYear.toString()) }
     var signatory by remember { mutableStateOf(prefs.authorizedSignatory) }
     var membershipFee by remember { mutableStateOf(prefs.membershipFeeInr.toInt().toString()) }
+    var driveWebhookUrl by remember { mutableStateOf(prefs.driveWebhookUrl) }
+    var driveSyncSecret by remember { mutableStateOf(prefs.driveSyncSecret) }
     var driveFolderId by remember { mutableStateOf(prefs.driveRootFolderId) }
-    var driveToken by remember { mutableStateOf(prefs.driveAccessToken) }
     var autoDrive by remember { mutableStateOf(prefs.autoQueueDriveUpload) }
+    var testingDrive by remember { mutableStateOf(false) }
+    var testStatusMessage by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
 
     // Language Selection Card
     SectionCard(title = "App Language / भाषा") {
@@ -176,7 +183,7 @@ private fun GeneralSettingsTab(
     }
 
     // Center & Billing Settings
-    SectionCard(title = "Center, Billing & Drive Settings") {
+    SectionCard(title = "Center, Billing & Drive Auto-Sync") {
         OutlinedTextField(
             value = deviceCode,
             onValueChange = { if (isAdmin) deviceCode = it.uppercase().take(12) },
@@ -222,28 +229,114 @@ private fun GeneralSettingsTab(
         Spacer(Modifier.height(10.dp))
         HorizontalDivider(color = BorderGray)
         Spacer(Modifier.height(10.dp))
-        Text("Google Drive Sync Settings", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Permanent Google Drive Auto-Sync", fontWeight = FontWeight.Bold, color = BhoomgaadiDarkGreen)
+            StatusPill(
+                text = if (prefs.isDriveConfigured) "Configured" else "Not Set",
+                bgColor = if (prefs.isDriveConfigured) BhoomgaadiLightGreen else SurfaceSubtle,
+                fgColor = if (prefs.isDriveConfigured) BhoomgaadiDarkGreen else TextSecondary
+            )
+        }
         Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = driveFolderId,
-            onValueChange = { if (isAdmin) driveFolderId = it.trim() },
-            readOnly = !isAdmin,
-            label = { Text("Google Drive Root Folder ID") },
-            singleLine = true,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth()
+        Text(
+            text = "Uses your permanent Google Apps Script Web App URL — never expires and works across one shared Gmail or separate officer accounts.",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = driveToken,
-            onValueChange = { if (isAdmin) driveToken = it.trim() },
-            readOnly = !isAdmin,
-            label = { Text("Drive OAuth Access Token (Optional)") },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
+
+        if (isAdmin) {
+            OutlinedTextField(
+                value = driveWebhookUrl,
+                onValueChange = {
+                    driveWebhookUrl = it.trim()
+                    testStatusMessage = null
+                },
+                label = { Text("Apps Script Web App URL (https://script.google.com/.../exec)") },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_drive_webhook_url")
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = driveSyncSecret,
+                onValueChange = {
+                    driveSyncSecret = it.trim()
+                    testStatusMessage = null
+                },
+                label = { Text("Sync Secret Key (matches SYNC_SECRET in script)") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_drive_secret")
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = driveFolderId,
+                onValueChange = { driveFolderId = it.trim() },
+                label = { Text("Drive Root Folder ID (Optional override)") },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_drive_folder_id")
+            )
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        testingDrive = true
+                        testStatusMessage = null
+                        val res = withContext(Dispatchers.IO) {
+                            DriveService().testConnection(driveWebhookUrl, driveSyncSecret, driveFolderId)
+                        }
+                        testingDrive = false
+                        res.fold(
+                            onSuccess = { msg -> testStatusMessage = true to msg },
+                            onFailure = { err -> testStatusMessage = false to (err.message ?: "Connection failed.") }
+                        )
+                    }
+                },
+                enabled = !testingDrive && driveWebhookUrl.isNotBlank() && driveSyncSecret.isNotBlank(),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("settings_test_drive_btn")
+            ) {
+                Icon(Icons.Filled.CloudDone, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (testingDrive) "Testing Connection..." else "Test Drive Connection")
+            }
+
+            testStatusMessage?.let { (ok, msg) ->
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    color = if (ok) BhoomgaadiLightGreen else DangerLightRed,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = msg,
+                        color = if (ok) BhoomgaadiDarkGreen else DangerRed,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -251,8 +344,8 @@ private fun GeneralSettingsTab(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Auto Upload PDFs", fontWeight = FontWeight.SemiBold)
-                Text("Upload when internet is available", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                Text("Auto Upload Bill PDFs", fontWeight = FontWeight.SemiBold)
+                Text("Automatically sync when internet is available", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
             }
             Switch(
                 checked = autoDrive,
@@ -270,13 +363,21 @@ private fun GeneralSettingsTab(
                 testTag = "settings_save_general_btn",
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
+                    if (driveWebhookUrl.isNotBlank()) {
+                        val validCheck = runCatching { DriveService().validateWebhookUrl(driveWebhookUrl) }
+                        if (validCheck.isFailure) {
+                            onMessage(validCheck.exceptionOrNull()?.message ?: "Invalid Drive URL.")
+                            return@FieldActionButton
+                        }
+                    }
                     viewModel.saveCenterSettings(
                         deviceCode = deviceCode.ifBlank { "DNT-KTK" },
                         procurementYear = seasonYear.toIntOrNull() ?: 2026,
                         authorizedSignatory = signatory.ifBlank { "Authorized Signatory" },
                         membershipFeeInr = membershipFee.toDoubleOrNull() ?: 1100.0,
+                        driveWebhookUrl = driveWebhookUrl,
+                        driveSyncSecret = driveSyncSecret,
                         driveFolderId = driveFolderId,
-                        driveAccessToken = driveToken,
                         autoQueueDrive = autoDrive
                     )
                     onMessage("Settings saved successfully.")
@@ -285,7 +386,7 @@ private fun GeneralSettingsTab(
         } else {
             Spacer(Modifier.height(8.dp))
             Text(
-                "Only Admin can modify Center, Membership Fee, and Drive settings.",
+                "Only Admin can view or modify Center, Membership Fee, and Drive Sync credentials.",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary
             )

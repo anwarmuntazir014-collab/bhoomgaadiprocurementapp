@@ -20,9 +20,10 @@ class DriveUploadWorker(
 
     override suspend fun doWork(): Result {
         val prefs = AppPreferences(applicationContext)
-        val token = prefs.driveAccessToken
+        val webhookUrl = prefs.driveWebhookUrl
+        val secret = prefs.driveSyncSecret
         val folderId = prefs.driveRootFolderId
-        if (token.isBlank()) {
+        if (webhookUrl.isBlank() || secret.isBlank()) {
             return Result.success()
         }
 
@@ -36,7 +37,20 @@ class DriveUploadWorker(
 
         for (bill in pendingBills) {
             val file = File(bill.pdfFilePath)
-            val uploadResult = driveService.uploadPdf(token, folderId, file)
+            val subFolders = listOf(
+                "Bills",
+                bill.procurementYear.toString(),
+                bill.locationNameSnapshot.ifBlank { "General" },
+                bill.operatorName.ifBlank { "FieldOfficer" }
+            )
+            val uploadResult = driveService.uploadFile(
+                webhookUrl = webhookUrl,
+                secret = secret,
+                rootFolderId = folderId,
+                file = file,
+                mimeType = "application/pdf",
+                subFolders = subFolders
+            )
             if (uploadResult.isSuccess) {
                 billDao.updateDriveUploadStatus(
                     billUuid = bill.billUuid,
